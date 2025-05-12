@@ -1,6 +1,15 @@
 import { Request, Response } from 'express';
 import Device from '../models/device.model';
-import { sendMessage, disconnectWhatsAppClient, testWhatsAppConnection as testWhatsAppConnectionService } from '../services/whatsapp.service';
+import {
+  sendMessage,
+  disconnectWhatsAppClient,
+  testWhatsAppConnection as testWhatsAppConnectionService,
+  activeClients
+} from '../services/whatsapp.service';
+import { MessageMedia } from 'whatsapp-web.js';
+import fs from 'fs';
+import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
 
 // Send a message
 export const sendWhatsAppMessage = async (req: Request, res: Response) => {
@@ -159,4 +168,317 @@ export const testWhatsAppConnection = async (req: Request, res: Response) => {
       stack: error.stack
     });
   }
+};
+
+// Send a text message (new API)
+export const sendTextMessage = async (req: Request, res: Response) => {
+  try {
+    const { deviceId, to, content } = req.body;
+    const userId = req.user._id;
+
+    if (!deviceId || !to || !content) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: deviceId, to, content'
+      });
+    }
+
+    // Check if device exists and belongs to user
+    const device = await Device.findOne({ _id: deviceId, user: userId });
+    if (!device) {
+      return res.status(404).json({ success: false, message: 'Device not found' });
+    }
+
+    // Check if device is connected
+    if (device.status !== 'connected') {
+      return res.status(400).json({ success: false, message: 'Device is not connected to WhatsApp' });
+    }
+
+    // Get the WhatsApp client
+    const client = await activeClients.getClient(deviceId);
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: 'WhatsApp client not found or not connected'
+      });
+    }
+
+    // Format the phone number
+    const formattedNumber = formatPhoneNumber(to);
+
+    // Send the message
+    const message = await client.sendMessage(formattedNumber, content);
+
+    return res.status(200).json({
+      success: true,
+      messageId: message.id._serialized
+    });
+  } catch (error: any) {
+    console.error('[WhatsApp] Error sending text message:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send message',
+      error: error.message
+    });
+  }
+};
+
+// Send a file (image, document, audio, video)
+export const sendFileMessage = async (req: Request, res: Response) => {
+  try {
+    const { deviceId, to, type, caption } = req.body;
+    const userId = req.user._id;
+    const file = req.file;
+
+    if (!deviceId || !to || !type || !file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: deviceId, to, type, file'
+      });
+    }
+
+    // Check if device exists and belongs to user
+    const device = await Device.findOne({ _id: deviceId, user: userId });
+    if (!device) {
+      return res.status(404).json({ success: false, message: 'Device not found' });
+    }
+
+    // Check if device is connected
+    if (device.status !== 'connected') {
+      return res.status(400).json({ success: false, message: 'Device is not connected to WhatsApp' });
+    }
+
+    // Get the WhatsApp client
+    const client = await activeClients.getClient(deviceId);
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: 'WhatsApp client not found or not connected'
+      });
+    }
+
+    // Format the phone number
+    const formattedNumber = formatPhoneNumber(to);
+
+    // Create message media from file
+    const media = MessageMedia.fromFilePath(file.path);
+
+    // Send the media message
+    const message = await client.sendMessage(formattedNumber, media, {
+      caption: caption || undefined,
+      sendMediaAsDocument: type === 'document'
+    });
+
+    // Clean up the temporary file
+    fs.unlinkSync(file.path);
+
+    return res.status(200).json({
+      success: true,
+      messageId: message.id._serialized
+    });
+  } catch (error: any) {
+    console.error('[WhatsApp] Error sending file:', error);
+
+    // Clean up the temporary file if it exists
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send file',
+      error: error.message
+    });
+  }
+};
+
+// Send a location message
+export const sendLocationMessage = async (req: Request, res: Response) => {
+  try {
+    const { deviceId, to, content } = req.body;
+    const userId = req.user._id;
+
+    if (!deviceId || !to || !content) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: deviceId, to, content'
+      });
+    }
+
+    // Check if device exists and belongs to user
+    const device = await Device.findOne({ _id: deviceId, user: userId });
+    if (!device) {
+      return res.status(404).json({ success: false, message: 'Device not found' });
+    }
+
+    // Check if device is connected
+    if (device.status !== 'connected') {
+      return res.status(400).json({ success: false, message: 'Device is not connected to WhatsApp' });
+    }
+
+    // Parse the location data
+    let location;
+    try {
+      location = JSON.parse(content);
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid location data'
+      });
+    }
+
+    if (!location.latitude || !location.longitude) {
+      return res.status(400).json({
+        success: false,
+        message: 'Location must include latitude and longitude'
+      });
+    }
+
+    // Get the WhatsApp client
+    const client = await activeClients.getClient(deviceId);
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: 'WhatsApp client not found or not connected'
+      });
+    }
+
+    // Format the phone number
+    const formattedNumber = formatPhoneNumber(to);
+
+    // Create location object
+    const locationObject = {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      name: location.name || undefined,
+      address: location.address || undefined
+    };
+
+    // Send the location
+    const message = await client.sendMessage(formattedNumber, locationObject);
+
+    return res.status(200).json({
+      success: true,
+      messageId: message.id._serialized
+    });
+  } catch (error: any) {
+    console.error('[WhatsApp] Error sending location:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send location',
+      error: error.message
+    });
+  }
+};
+
+// Send a contact message
+export const sendContactMessage = async (req: Request, res: Response) => {
+  try {
+    const { deviceId, to, content } = req.body;
+    const userId = req.user._id;
+
+    if (!deviceId || !to || !content) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: deviceId, to, content'
+      });
+    }
+
+    // Check if device exists and belongs to user
+    const device = await Device.findOne({ _id: deviceId, user: userId });
+    if (!device) {
+      return res.status(404).json({ success: false, message: 'Device not found' });
+    }
+
+    // Check if device is connected
+    if (device.status !== 'connected') {
+      return res.status(400).json({ success: false, message: 'Device is not connected to WhatsApp' });
+    }
+
+    // Parse the contact data
+    let contact;
+    try {
+      contact = JSON.parse(content);
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid contact data'
+      });
+    }
+
+    if (!contact.name || !contact.phones || !contact.phones.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Contact must include name and at least one phone number'
+      });
+    }
+
+    // Get the WhatsApp client
+    const client = await activeClients.getClient(deviceId);
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: 'WhatsApp client not found or not connected'
+      });
+    }
+
+    // Format the phone number
+    const formattedNumber = formatPhoneNumber(to);
+
+    // Create vCard
+    const vCard = createVCard(contact);
+
+    // Send the contact as vCard
+    const media = new MessageMedia('text/vcard', Buffer.from(vCard).toString('base64'), `${contact.name}.vcf`);
+    const message = await client.sendMessage(formattedNumber, media);
+
+    return res.status(200).json({
+      success: true,
+      messageId: message.id._serialized
+    });
+  } catch (error: any) {
+    console.error('[WhatsApp] Error sending contact:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send contact',
+      error: error.message
+    });
+  }
+};
+
+// Helper function to format phone number
+const formatPhoneNumber = (phone: string): string => {
+  // Remove any non-digit characters
+  const digits = phone.replace(/\D/g, '');
+
+  // Add @ for group chats if needed
+  if (phone.includes('-')) {
+    return `${phone}@g.us`;
+  }
+
+  // Regular phone number
+  return `${digits}@c.us`;
+};
+
+// Helper function to create vCard
+const createVCard = (contact: any): string => {
+  let vCard = 'BEGIN:VCARD\n';
+  vCard += 'VERSION:3.0\n';
+  vCard += `FN:${contact.name}\n`;
+  vCard += `N:${contact.name};;;;\n`;
+
+  // Add phone numbers
+  contact.phones.forEach((phone: string, index: number) => {
+    vCard += `TEL;type=CELL${index === 0 ? ';type=pref' : ''}:${phone}\n`;
+  });
+
+  // Add emails if available
+  if (contact.emails && contact.emails.length) {
+    contact.emails.forEach((email: string, index: number) => {
+      vCard += `EMAIL${index === 0 ? ';type=pref' : ''}:${email}\n`;
+    });
+  }
+
+  vCard += 'END:VCARD';
+  return vCard;
 };

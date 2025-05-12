@@ -446,7 +446,7 @@ class WhatsAppClientManager {
 }
 
 // Create a singleton instance of the client manager
-const activeClients = new WhatsAppClientManager();
+export const activeClients = new WhatsAppClientManager();
 
 // Get the sessions directory path
 const getSessionsDir = (): string => {
@@ -539,9 +539,9 @@ export const initWhatsAppClient = async (deviceId: string, socketId: string, io:
 
       await Device.findByIdAndUpdate(deviceId, {
         sessionInfo: {
-          exists: sessionExists, 
+          exists: sessionExists,
           lastActive: new Date(),
-          
+
         }
       });
 
