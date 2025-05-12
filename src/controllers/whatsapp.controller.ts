@@ -448,13 +448,23 @@ export const sendContactMessage = async (req: Request, res: Response) => {
 
 // Helper function to format phone number
 const formatPhoneNumber = (phone: string): string => {
-  // Remove any non-digit characters
-  const digits = phone.replace(/\D/g, '');
+  // If it's already a properly formatted group ID, return it as is
+  if (phone.endsWith('@g.us')) {
+    return phone;
+  }
 
-  // Add @ for group chats if needed
-  if (phone.includes('-')) {
+  // If it's already a properly formatted individual ID, return it as is
+  if (phone.endsWith('@c.us')) {
+    return phone;
+  }
+
+  // If it looks like a group ID (contains hyphens or is very long)
+  if (phone.includes('-') || (phone.length > 15 && !phone.includes('@'))) {
     return `${phone}@g.us`;
   }
+
+  // Remove any non-digit characters for regular phone numbers
+  const digits = phone.replace(/\D/g, '');
 
   // Regular phone number
   return `${digits}@c.us`;
