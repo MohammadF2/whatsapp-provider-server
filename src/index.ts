@@ -59,7 +59,7 @@ mongoose.connect(MONGODB_URI)
   })
   .finally(() => {
     // Start server regardless of MongoDB connection status
-    const PORT = process.env.PORT || 3000;
+    const PORT = process.env.PORT || 3000; // Changed to 3000 to avoid conflicts
     server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
