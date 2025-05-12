@@ -4,12 +4,14 @@ import { Server as SocketIOServer } from 'socket.io';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import swaggerUi from 'swagger-ui-express';
 import authRoutes from './routes/auth.routes';
 import deviceRoutes from './routes/device.routes';
 import whatsappRoutes from './routes/whatsapp.routes';
 import conversationRoutes from './routes/conversation.routes';
 import { setupSocketHandlers } from './socket';
 import { restoreActiveClients } from './services/whatsapp.service';
+import swaggerSpec from './config/swagger';
 
 // Load environment variables
 dotenv.config();
@@ -32,6 +34,16 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Swagger API Documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  explorer: true,
+  customCss: '.swagger-ui .topbar { display: none }',
+  swaggerOptions: {
+    docExpansion: 'none',
+    persistAuthorization: true,
+  },
+}));
 
 // Routes
 app.use('/api/auth', authRoutes);
