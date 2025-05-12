@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/auth.routes';
 import deviceRoutes from './routes/device.routes';
 import whatsappRoutes from './routes/whatsapp.routes';
+import conversationRoutes from './routes/conversation.routes';
 import { setupSocketHandlers } from './socket';
 import { restoreActiveClients } from './services/whatsapp.service';
 
@@ -36,6 +37,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth', authRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/whatsapp', conversationRoutes); // Add conversation routes under the same prefix
 
 // Socket.io setup
 setupSocketHandlers(io);
