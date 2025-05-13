@@ -214,10 +214,13 @@ export const sendTextMessage = async (req: Request, res: Response) => {
     await MessageHistory.create({
       deviceId,
       userId,
+      deviceName: device.name,
+      deviceNumber: device.whatsappInfo?.number,
       recipient: formattedNumber,
       message: content,
       messageType: 'text',
       status: 'sent',
+      messageId: message.id._serialized,
       timestamp: new Date()
     });
 
@@ -232,14 +235,18 @@ export const sendTextMessage = async (req: Request, res: Response) => {
     try {
       const { deviceId, to, content } = req.body;
       const userId = req.user._id;
+      const device = await Device.findOne({ _id: deviceId, user: userId });
 
       await MessageHistory.create({
         deviceId,
         userId,
+        deviceName: device?.name,
+        deviceNumber: device?.whatsappInfo?.number,
         recipient: formatPhoneNumber(to),
         message: content,
         messageType: 'text',
         status: 'failed',
+        errorMessage: error.message,
         timestamp: new Date()
       });
     } catch (dbError) {
@@ -300,6 +307,22 @@ export const sendFileMessage = async (req: Request, res: Response) => {
       sendMediaAsDocument: type === 'document'
     });
 
+    // Store the message in the database
+    await MessageHistory.create({
+      deviceId,
+      userId,
+      deviceName: device.name,
+      deviceNumber: device.whatsappInfo?.number,
+      recipient: formattedNumber,
+      message: caption || `[${type.toUpperCase()}]`,
+      messageType: type,
+      status: 'sent',
+      messageId: message.id._serialized,
+      mediaUrl: file.path,
+      caption: caption,
+      timestamp: new Date()
+    });
+
     // Clean up the temporary file
     fs.unlinkSync(file.path);
 
@@ -309,6 +332,31 @@ export const sendFileMessage = async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('[WhatsApp] Error sending file:', error);
+
+    // Store the failed message in the database
+    try {
+      const { deviceId, to, type, caption } = req.body;
+      const userId = req.user._id;
+      const file = req.file;
+      const device = await Device.findOne({ _id: deviceId, user: userId });
+
+      await MessageHistory.create({
+        deviceId,
+        userId,
+        deviceName: device?.name,
+        deviceNumber: device?.whatsappInfo?.number,
+        recipient: formatPhoneNumber(to),
+        message: caption || `[${type.toUpperCase()}]`,
+        messageType: type,
+        status: 'failed',
+        errorMessage: error.message,
+        mediaUrl: file?.path,
+        caption: caption,
+        timestamp: new Date()
+      });
+    } catch (dbError) {
+      console.error('[WhatsApp] Error storing failed message:', dbError);
+    }
 
     // Clean up the temporary file if it exists
     if (req.file && fs.existsSync(req.file.path)) {
@@ -388,12 +436,58 @@ export const sendLocationMessage = async (req: Request, res: Response) => {
     // Send the location
     const message = await client.sendMessage(formattedNumber, locationObject);
 
+    // Store the message in the database
+    await MessageHistory.create({
+      deviceId,
+      userId,
+      deviceName: device.name,
+      deviceNumber: device.whatsappInfo?.number,
+      recipient: formattedNumber,
+      message: `Location: ${location.name || `${location.latitude},${location.longitude}`}`,
+      messageType: 'location',
+      status: 'sent',
+      messageId: message.id._serialized,
+      metadata: location,
+      timestamp: new Date()
+    });
+
     return res.status(200).json({
       success: true,
       messageId: message.id._serialized
     });
   } catch (error: any) {
     console.error('[WhatsApp] Error sending location:', error);
+
+    // Store the failed message in the database
+    try {
+      const { deviceId, to, content } = req.body;
+      const userId = req.user._id;
+      const device = await Device.findOne({ _id: deviceId, user: userId });
+      let locationData;
+
+      try {
+        locationData = JSON.parse(content);
+      } catch (e) {
+        locationData = { error: 'Invalid location data' };
+      }
+
+      await MessageHistory.create({
+        deviceId,
+        userId,
+        deviceName: device?.name,
+        deviceNumber: device?.whatsappInfo?.number,
+        recipient: formatPhoneNumber(to),
+        message: `Location: ${locationData.name || 'Unknown location'}`,
+        messageType: 'location',
+        status: 'failed',
+        errorMessage: error.message,
+        metadata: locationData,
+        timestamp: new Date()
+      });
+    } catch (dbError) {
+      console.error('[WhatsApp] Error storing failed location message:', dbError);
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Failed to send location',
@@ -463,12 +557,58 @@ export const sendContactMessage = async (req: Request, res: Response) => {
     const media = new MessageMedia('text/vcard', Buffer.from(vCard).toString('base64'), `${contact.name}.vcf`);
     const message = await client.sendMessage(formattedNumber, media);
 
+    // Store the message in the database
+    await MessageHistory.create({
+      deviceId,
+      userId,
+      deviceName: device.name,
+      deviceNumber: device.whatsappInfo?.number,
+      recipient: formattedNumber,
+      message: `Contact: ${contact.name}`,
+      messageType: 'contact',
+      status: 'sent',
+      messageId: message.id._serialized,
+      metadata: contact,
+      timestamp: new Date()
+    });
+
     return res.status(200).json({
       success: true,
       messageId: message.id._serialized
     });
   } catch (error: any) {
     console.error('[WhatsApp] Error sending contact:', error);
+
+    // Store the failed message in the database
+    try {
+      const { deviceId, to, content } = req.body;
+      const userId = req.user._id;
+      const device = await Device.findOne({ _id: deviceId, user: userId });
+      let contactData;
+
+      try {
+        contactData = JSON.parse(content);
+      } catch (e) {
+        contactData = { error: 'Invalid contact data' };
+      }
+
+      await MessageHistory.create({
+        deviceId,
+        userId,
+        deviceName: device?.name,
+        deviceNumber: device?.whatsappInfo?.number,
+        recipient: formatPhoneNumber(to),
+        message: `Contact: ${contactData.name || 'Unknown contact'}`,
+        messageType: 'contact',
+        status: 'failed',
+        errorMessage: error.message,
+        metadata: contactData,
+        timestamp: new Date()
+      });
+    } catch (dbError) {
+      console.error('[WhatsApp] Error storing failed contact message:', dbError);
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Failed to send contact',

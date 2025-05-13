@@ -3,10 +3,17 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IMessageHistory extends Document {
   deviceId: mongoose.Types.ObjectId;
   userId: mongoose.Types.ObjectId;
+  deviceName?: string;
+  deviceNumber?: string;
   recipient: string;
   message: string;
-  messageType: string;
-  status: string;
+  messageType: 'text' | 'image' | 'video' | 'audio' | 'document' | 'location' | 'contact' | 'voice';
+  status: 'sent' | 'failed' | 'pending';
+  errorMessage?: string;
+  messageId?: string;
+  mediaUrl?: string;
+  caption?: string;
+  metadata?: any;
   timestamp: Date;
 }
 
@@ -14,16 +21,25 @@ const messageHistorySchema = new Schema({
   deviceId: {
     type: Schema.Types.ObjectId,
     ref: 'Device',
-    required: true
+    required: true,
+    index: true
   },
   userId: {
     type: Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: true,
+    index: true
+  },
+  deviceName: {
+    type: String
+  },
+  deviceNumber: {
+    type: String
   },
   recipient: {
     type: String,
-    required: true
+    required: true,
+    index: true
   },
   message: {
     type: String,
@@ -31,15 +47,35 @@ const messageHistorySchema = new Schema({
   },
   messageType: {
     type: String,
-    default: 'text'
+    enum: ['text', 'image', 'video', 'audio', 'document', 'location', 'contact', 'voice'],
+    default: 'text',
+    index: true
   },
   status: {
     type: String,
-    default: 'sent'
+    enum: ['sent', 'failed', 'pending'],
+    default: 'sent',
+    index: true
+  },
+  errorMessage: {
+    type: String
+  },
+  messageId: {
+    type: String
+  },
+  mediaUrl: {
+    type: String
+  },
+  caption: {
+    type: String
+  },
+  metadata: {
+    type: Schema.Types.Mixed
   },
   timestamp: {
     type: Date,
-    default: Date.now
+    default: Date.now,
+    index: true
   }
 });
 
