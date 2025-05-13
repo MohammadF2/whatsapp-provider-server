@@ -492,9 +492,14 @@ const updateSessionInfo = async (deviceId: string, connected: boolean = true): P
   }
 };
 
+// Interface for custom event emitter
+interface CustomEventEmitter {
+  emit: (event: string, ...args: any[]) => void;
+}
+
 // Initialize WhatsApp client for a device
-export const initWhatsAppClient = async (deviceId: string, socketId: string, io: any) => {
-  console.log(`[WhatsApp] Initializing client for device ${deviceId}, socket ${socketId}`);
+export const initWhatsAppClient = async (deviceId: string, socketId: string, io: any | CustomEventEmitter) => {
+  console.log(`[WhatsApp] Initializing client for device ${deviceId}, socket/session ${socketId}`);
   try {
     // Check if client already exists (in database and memory)
     const clientExists = await activeClients.hasClient(deviceId);
@@ -570,17 +575,32 @@ export const initWhatsAppClient = async (deviceId: string, socketId: string, io:
         // Generate QR code as data URL
         const qrDataURL = await qrcode.toDataURL(qr);
 
-        console.log(`[WhatsApp] Sending QR code to socket ${socketId} for device ${deviceId}`);
-        // Send QR code to client
-        io.to(socketId).emit('whatsapp:qr', { deviceId, qrCode: qrDataURL });
+        console.log(`[WhatsApp] Sending QR code to socket/session ${socketId} for device ${deviceId}`);
+
+        // Check if io is a socket.io instance or a custom event emitter
+        if (typeof io.to === 'function') {
+          // Socket.io instance
+          io.to(socketId).emit('whatsapp:qr', { deviceId, qrCode: qrDataURL });
+        } else {
+          // Custom event emitter
+          io.emit('qr', qr, qrDataURL);
+        }
 
         console.log(`[WhatsApp] QR code successfully sent for device ${deviceId}`);
       } catch (error) {
         console.error(`[WhatsApp] QR code generation error for device ${deviceId}:`, error);
-        io.to(socketId).emit('whatsapp:error', {
-          deviceId,
-          message: 'Failed to generate QR code'
-        });
+
+        // Check if io is a socket.io instance or a custom event emitter
+        if (typeof io.to === 'function') {
+          // Socket.io instance
+          io.to(socketId).emit('whatsapp:error', {
+            deviceId,
+            message: 'Failed to generate QR code'
+          });
+        } else {
+          // Custom event emitter
+          io.emit('error', 'Failed to generate QR code');
+        }
       }
     });
 
@@ -641,12 +661,18 @@ export const initWhatsAppClient = async (deviceId: string, socketId: string, io:
             console.error(`[WhatsApp] Error getting profile picture for device ${deviceId}:`, picError);
           }
 
-          console.log(`[WhatsApp] Emitting ready event to socket ${socketId} for device ${deviceId}`);
+          console.log(`[WhatsApp] Emitting ready event to socket/session ${socketId} for device ${deviceId}`);
           // Notify client
-          io.to(socketId).emit('whatsapp:ready', {
-            deviceId,
-            info: device.whatsappInfo
-          });
+          if (typeof io.to === 'function') {
+            // Socket.io instance
+            io.to(socketId).emit('whatsapp:ready', {
+              deviceId,
+              info: device.whatsappInfo
+            });
+          } else {
+            // Custom event emitter
+            io.emit('ready', device.whatsappInfo);
+          }
 
           console.log(`[WhatsApp] Client ready process completed for device ${deviceId}`);
         }
@@ -678,7 +704,13 @@ export const initWhatsAppClient = async (deviceId: string, socketId: string, io:
 
         console.log(`[WhatsApp] Emitting disconnected event for device ${deviceId}`);
         // Notify client
-        io.emit('whatsapp:disconnected', { deviceId });
+        if (typeof io.to === 'function') {
+          // Socket.io instance
+          io.emit('whatsapp:disconnected', { deviceId });
+        } else {
+          // Custom event emitter
+          io.emit('disconnected');
+        }
 
         console.log(`[WhatsApp] Client disconnection process completed for device ${deviceId}`);
       } catch (error) {
@@ -689,19 +721,33 @@ export const initWhatsAppClient = async (deviceId: string, socketId: string, io:
     // Add authentication failure event
     client.on('auth_failure', (msg) => {
       console.error(`[WhatsApp] Authentication failure for device ${deviceId}:`, msg);
-      io.to(socketId).emit('whatsapp:error', {
-        deviceId,
-        message: 'Authentication failed: ' + msg
-      });
+
+      if (typeof io.to === 'function') {
+        // Socket.io instance
+        io.to(socketId).emit('whatsapp:error', {
+          deviceId,
+          message: 'Authentication failed: ' + msg
+        });
+      } else {
+        // Custom event emitter
+        io.emit('error', 'Authentication failed: ' + msg);
+      }
     });
 
     // Add general failure event
     client.on('failure', (error) => {
       console.error(`[WhatsApp] General failure for device ${deviceId}:`, error);
-      io.to(socketId).emit('whatsapp:error', {
-        deviceId,
-        message: 'Connection failed: ' + error.message
-      });
+
+      if (typeof io.to === 'function') {
+        // Socket.io instance
+        io.to(socketId).emit('whatsapp:error', {
+          deviceId,
+          message: 'Connection failed: ' + error.message
+        });
+      } else {
+        // Custom event emitter
+        io.emit('error', 'Connection failed: ' + error.message);
+      }
     });
 
     // Add loading screen event for debugging
