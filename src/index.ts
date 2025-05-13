@@ -9,6 +9,7 @@ import authRoutes from './routes/auth.routes';
 import deviceRoutes from './routes/device.routes';
 import whatsappRoutes from './routes/whatsapp.routes';
 import conversationRoutes from './routes/conversation.routes';
+import messageHistoryRoutes from './routes/message-history.routes';
 import { setupSocketHandlers } from './socket';
 import { restoreActiveClients } from './services/whatsapp.service';
 import swaggerSpec from './config/swagger';
@@ -50,6 +51,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/whatsapp', conversationRoutes); // Add conversation routes under the same prefix
+app.use('/api/message-history', messageHistoryRoutes);
 
 // Socket.io setup
 setupSocketHandlers(io);

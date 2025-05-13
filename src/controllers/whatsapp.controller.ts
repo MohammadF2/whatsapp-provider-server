@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import Device from '../models/device.model';
+import MessageHistory from '../models/message-history.model';
 import {
   sendMessage,
   disconnectWhatsAppClient,
@@ -209,12 +210,42 @@ export const sendTextMessage = async (req: Request, res: Response) => {
     // Send the message
     const message = await client.sendMessage(formattedNumber, content);
 
+    // Store the message in the database
+    await MessageHistory.create({
+      deviceId,
+      userId,
+      recipient: formattedNumber,
+      message: content,
+      messageType: 'text',
+      status: 'sent',
+      timestamp: new Date()
+    });
+
     return res.status(200).json({
       success: true,
       messageId: message.id._serialized
     });
   } catch (error: any) {
     console.error('[WhatsApp] Error sending text message:', error);
+
+    // Store the failed message in the database
+    try {
+      const { deviceId, to, content } = req.body;
+      const userId = req.user._id;
+
+      await MessageHistory.create({
+        deviceId,
+        userId,
+        recipient: formatPhoneNumber(to),
+        message: content,
+        messageType: 'text',
+        status: 'failed',
+        timestamp: new Date()
+      });
+    } catch (dbError) {
+      console.error('[WhatsApp] Error storing failed message:', dbError);
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Failed to send message',
