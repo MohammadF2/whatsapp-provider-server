@@ -15,6 +15,7 @@ import qrcodeRoutes from './routes/qrcode.routes';
 import { setupSocketHandlers } from './socket';
 import { restoreActiveClients } from './services/whatsapp.service';
 import swaggerSpec from './config/swagger';
+import { initializeShutdownManager } from './services/shutdown-manager.service';
 
 // Load environment variables
 dotenv.config();
@@ -48,6 +49,77 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   },
 }));
 
+/**
+ * @swagger
+ * /:
+ *   get:
+ *     summary: API Health Check and Information
+ *     tags: [System]
+ *     responses:
+ *       200:
+ *         description: API is running successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: "online"
+ *                 message:
+ *                   type: string
+ *                   example: "WhatsApp API Provider is running"
+ *                 version:
+ *                   type: string
+ *                   example: "1.0.0"
+ *                 timestamp:
+ *                   type: string
+ *                   format: date-time
+ *                 endpoints:
+ *                   type: object
+ *                   properties:
+ *                     auth:
+ *                       type: string
+ *                       example: "/api/auth"
+ *                     devices:
+ *                       type: string
+ *                       example: "/api/devices"
+ *                     whatsapp:
+ *                       type: string
+ *                       example: "/api/whatsapp"
+ *                     messageHistory:
+ *                       type: string
+ *                       example: "/api/message-history"
+ *                     contacts:
+ *                       type: string
+ *                       example: "/api/contacts"
+ *                     qrcode:
+ *                       type: string
+ *                       example: "/api/qrcode"
+ *                     documentation:
+ *                       type: string
+ *                       example: "/api-docs"
+ */
+
+// API Health Check endpoint
+app.get('/api', (req, res) => {
+  res.json({
+    status: 'online',
+    message: 'WhatsApp API Provider is running',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      auth: '/api/auth',
+      devices: '/api/devices',
+      whatsapp: '/api/whatsapp',
+      messageHistory: '/api/message-history',
+      contacts: '/api/contacts',
+      qrcode: '/api/qrcode',
+      documentation: '/api-docs'
+    }
+  });
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/devices', deviceRoutes);
@@ -79,18 +151,15 @@ mongoose.connect(MONGODB_URI)
   })
   .finally(() => {
     // Start server regardless of MongoDB connection status
-    const PORT = process.env.PORT || 3000; // Changed to 3000 to avoid conflicts
+    const PORT = process.env.PORT || 3000; // Server port // Changed to 3000 to avoid conflicts
     server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
   });
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (error) => {
-  console.error('Unhandled Rejection:', error);
+// Initialize shutdown manager for graceful shutdown handling
+initializeShutdownManager({
+  shutdownTimeoutMs: 30000, // 30 seconds
+  enableLogging: true,
+  forceExitAfterTimeout: true,
 });

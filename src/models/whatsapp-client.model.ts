@@ -6,12 +6,29 @@ export interface IWhatsAppClient extends Document {
   lastActive: Date;
   lastReconnect?: Date;
   sessionExists: boolean;
+  sessionPath: string; // Full path to session directory
+  sessionFiles?: string[]; // List of session files for verification
+  clientConfig?: {
+    authStrategy: string;
+    puppeteerOptions?: any;
+    webVersion?: string;
+    webVersionCache?: any;
+  };
+  connectionInfo?: {
+    isReady: boolean;
+    isAuthenticated: boolean;
+    batteryLevel?: number;
+    isConnected: boolean;
+    lastSeen?: Date;
+  };
   metadata?: {
     name?: string;
     number?: string;
     wid?: string;
     platform?: string;
     phoneVersion?: string;
+    pushname?: string;
+    profilePicUrl?: string;
   };
   createdAt: Date;
   updatedAt: Date;
@@ -41,12 +58,34 @@ const WhatsAppClientSchema = new Schema<IWhatsAppClient>(
       type: Boolean,
       default: false
     },
+    sessionPath: {
+      type: String,
+      required: true
+    },
+    sessionFiles: [{
+      type: String
+    }],
+    clientConfig: {
+      authStrategy: String,
+      puppeteerOptions: Schema.Types.Mixed,
+      webVersion: String,
+      webVersionCache: Schema.Types.Mixed
+    },
+    connectionInfo: {
+      isReady: { type: Boolean, default: false },
+      isAuthenticated: { type: Boolean, default: false },
+      batteryLevel: Number,
+      isConnected: { type: Boolean, default: false },
+      lastSeen: Date
+    },
     metadata: {
       name: String,
       number: String,
       wid: String,
       platform: String,
-      phoneVersion: String
+      phoneVersion: String,
+      pushname: String,
+      profilePicUrl: String
     }
   },
   {

@@ -14,6 +14,13 @@ export interface IDevice extends Document {
     lastActive?: Date;
     lastReconnect?: Date;
   };
+  seleniumConfig?: {
+    browserType: 'chrome' | 'firefox';
+    headless: boolean;
+    userAgent?: string;
+    autoConnect: boolean;
+    lastDriverInitialization?: Date;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,14 +46,30 @@ const deviceSchema = new Schema<IDevice>(
       name: String,
       number: String,
       profilePicUrl: String
-    },
-    sessionInfo: {
+    },    sessionInfo: {
       exists: {
         type: Boolean,
         default: false
       },
       lastActive: Date,
       lastReconnect: Date
+    },
+    seleniumConfig: {
+      browserType: {
+        type: String,
+        enum: ['chrome', 'firefox'],
+        default: 'chrome'
+      },
+      headless: {
+        type: Boolean,
+        default: false
+      },
+      userAgent: String,
+      autoConnect: {
+        type: Boolean,
+        default: true
+      },
+      lastDriverInitialization: Date
     }
   },
   {

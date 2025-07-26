@@ -7,6 +7,10 @@ import {
   testWhatsAppConnection as testWhatsAppConnectionService,
   activeClients
 } from '../services/whatsapp.service';
+import { 
+  sendMessageWithSelenium, 
+  disconnectWhatsAppClientWithSelenium 
+} from '../services/whatsapp-selenium.service';
 import { MessageMedia } from 'whatsapp-web.js';
 import fs from 'fs';
 import path from 'path';
@@ -31,9 +35,16 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Device is not connected to WhatsApp' });
     }
 
-    // Send message
-
-    const result = await sendMessage(deviceId, to, message);
+    // Determine whether to use Selenium based on device configuration
+    let result;
+    if (device.seleniumConfig?.browserType) {
+      console.log(`[WhatsApp Controller] Using Selenium for device ${deviceId}`);
+      result = await sendMessageWithSelenium(deviceId, to, message);
+    } else {
+      console.log(`[WhatsApp Controller] Using default WhatsApp client for device ${deviceId}`);
+      result = await sendMessage(deviceId, to, message);
+    }
+    
     if (result.success) {
       res.json({ success: true, messageId: result.messageId });
     } else {
@@ -86,8 +97,16 @@ export const disconnectWhatsApp = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Device not found' });
     }
 
-    // Disconnect WhatsApp client
-    const result = await disconnectWhatsAppClient(deviceId);
+    // Determine whether to use Selenium based on device configuration
+    let result;
+    if (device.seleniumConfig?.browserType) {
+      console.log(`[WhatsApp Controller] Using Selenium to disconnect device ${deviceId}`);
+      result = await disconnectWhatsAppClientWithSelenium(deviceId);
+    } else {
+      console.log(`[WhatsApp Controller] Using default method to disconnect device ${deviceId}`);
+      result = await disconnectWhatsAppClient(deviceId);
+    }
+
     if (result.success) {
       res.json({ success: true });
     } else {
@@ -195,14 +214,22 @@ export const sendTextMessage = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Device is not connected to WhatsApp' });
     }
 
-    // Get the WhatsApp client
-    const client = await activeClients.getClient(deviceId);
+    // Get the WhatsApp client - try memory first, then database
+    let client = activeClients.getClientSync(deviceId);
     if (!client) {
+      console.log(`[WhatsApp Controller] Client not found in memory for device ${deviceId}, checking database`);
+      client = await activeClients.getClient(deviceId);
+    }
+
+    if (!client) {
+      console.log(`[WhatsApp Controller] Client not found in memory or database for device ${deviceId}`);
       return res.status(404).json({
         success: false,
         message: 'WhatsApp client not found or not connected'
       });
     }
+
+    console.log(`[WhatsApp Controller] Client found for device ${deviceId}`);
 
     // Format the phone number
     const formattedNumber = formatPhoneNumber(to);
@@ -286,14 +313,22 @@ export const sendFileMessage = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Device is not connected to WhatsApp' });
     }
 
-    // Get the WhatsApp client
-    const client = await activeClients.getClient(deviceId);
+    // Get the WhatsApp client - try memory first, then database
+    let client = activeClients.getClientSync(deviceId);
     if (!client) {
+      console.log(`[WhatsApp Controller] Client not found in memory for device ${deviceId}, checking database`);
+      client = await activeClients.getClient(deviceId);
+    }
+
+    if (!client) {
+      console.log(`[WhatsApp Controller] Client not found in memory or database for device ${deviceId}`);
       return res.status(404).json({
         success: false,
         message: 'WhatsApp client not found or not connected'
       });
     }
+
+    console.log(`[WhatsApp Controller] Client found for device ${deviceId}`);
 
     // Format the phone number
     const formattedNumber = formatPhoneNumber(to);
@@ -413,14 +448,22 @@ export const sendLocationMessage = async (req: Request, res: Response) => {
       });
     }
 
-    // Get the WhatsApp client
-    const client = await activeClients.getClient(deviceId);
+    // Get the WhatsApp client - try memory first, then database
+    let client = activeClients.getClientSync(deviceId);
     if (!client) {
+      console.log(`[WhatsApp Controller] Client not found in memory for device ${deviceId}, checking database`);
+      client = await activeClients.getClient(deviceId);
+    }
+
+    if (!client) {
+      console.log(`[WhatsApp Controller] Client not found in memory or database for device ${deviceId}`);
       return res.status(404).json({
         success: false,
         message: 'WhatsApp client not found or not connected'
       });
     }
+
+    console.log(`[WhatsApp Controller] Client found for device ${deviceId}`);
 
     // Format the phone number
     const formattedNumber = formatPhoneNumber(to);
@@ -538,14 +581,22 @@ export const sendContactMessage = async (req: Request, res: Response) => {
       });
     }
 
-    // Get the WhatsApp client
-    const client = await activeClients.getClient(deviceId);
+    // Get the WhatsApp client - try memory first, then database
+    let client = activeClients.getClientSync(deviceId);
     if (!client) {
+      console.log(`[WhatsApp Controller] Client not found in memory for device ${deviceId}, checking database`);
+      client = await activeClients.getClient(deviceId);
+    }
+
+    if (!client) {
+      console.log(`[WhatsApp Controller] Client not found in memory or database for device ${deviceId}`);
       return res.status(404).json({
         success: false,
         message: 'WhatsApp client not found or not connected'
       });
     }
+
+    console.log(`[WhatsApp Controller] Client found for device ${deviceId}`);
 
     // Format the phone number
     const formattedNumber = formatPhoneNumber(to);

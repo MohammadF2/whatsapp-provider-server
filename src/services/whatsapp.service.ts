@@ -32,9 +32,11 @@ class WhatsAppClientManager {
    * Add a client to the active clients collection and update the database
    * @param deviceId The device ID
    * @param client The WhatsApp client instance
+   * @param sessionPath The path to the session directory
+   * @param clientConfig Optional client configuration
    */
-  async addClient(deviceId: string, client: Client): Promise<void> {
-    console.log(`[WhatsAppClientManager] Adding client for device ${deviceId}`);
+  async addClient(deviceId: string, client: Client, sessionPath?: string, clientConfig?: any): Promise<void> {
+    console.log(`[WhatsAppClientManager] Adding client for device ${deviceId} with database persistence`);
 
     // Update in-memory cache
     this.clients[deviceId] = client;
@@ -44,13 +46,63 @@ class WhatsAppClientManager {
       initialized: false
     };
 
-    // Update the database first
-    // try {
-    //   await this.updateClientStatus(deviceId, 'connecting');
-    // } catch (error) {
-    //   console.error(`[WhatsAppClientManager] Error updating client status for device ${deviceId}:`, error);
-    //   // Continue even if database update fails - we'll try again later
-    // }
+    // Determine session path
+    const finalSessionPath = sessionPath || path.join(path.resolve(__dirname, '../../sessions'), deviceId);
+
+    // Get session files if they exist
+    let sessionFiles: string[] = [];
+    try {
+      if (fs.existsSync(finalSessionPath)) {
+        sessionFiles = fs.readdirSync(finalSessionPath);
+      }
+    } catch (error) {
+      console.error(`[WhatsAppClientManager] Error reading session files for device ${deviceId}:`, error);
+    }
+
+    // Create or update database record with complete session information
+    try {
+      await WhatsAppClient.findOneAndUpdate(
+        { deviceId },
+        {
+          deviceId,
+          status: 'connecting',
+          lastActive: new Date(),
+          sessionExists: sessionFiles.length > 0,
+          sessionPath: finalSessionPath,
+          sessionFiles,
+          clientConfig: clientConfig || {
+            authStrategy: 'LocalAuth',
+            puppeteerOptions: {
+              headless: true,
+              args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process',
+                '--disable-gpu'
+              ]
+            }
+          },
+          connectionInfo: {
+            isReady: false,
+            isAuthenticated: false,
+            isConnected: false
+          }
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true
+        }
+      );
+      console.log(`[WhatsAppClientManager] Client record created/updated in database for device ${deviceId}`);
+    } catch (error) {
+      console.error(`[WhatsAppClientManager] Error creating/updating client record for device ${deviceId}:`, error);
+      throw error; // Don't continue if database update fails
+    }
   }
 
   /**
@@ -59,103 +111,239 @@ class WhatsAppClientManager {
    * @returns The WhatsApp client instance or undefined if not found
    */
   async getClient(deviceId: string): Promise<Client | undefined> {
-    // First check database to see if this client should be active
+    console.log(`[WhatsAppClientManager] Getting client for device ${deviceId} (database-driven)`);
+
     try {
-      // Check WhatsAppClient collection first
+      // Check database first - this is now the single source of truth
       const whatsappClient = await WhatsAppClient.findOne({ deviceId });
 
-      if (whatsappClient) {
-        if (whatsappClient.status === 'disconnected') {
-          // If client is marked as disconnected in the database,
-          // remove from in-memory cache if it exists
-          if (this.clients[deviceId]) {
-            console.log(`[WhatsAppClientManager] Client exists in memory but is disconnected in database for device ${deviceId}`);
-            delete this.clients[deviceId];
-            delete this.metadata[deviceId];
-            return undefined;
-          }
-          return undefined;
+      if (!whatsappClient) {
+        console.log(`[WhatsAppClientManager] No database record found for device ${deviceId}`);
+        // Clean up any stale memory reference
+        if (this.clients[deviceId]) {
+          delete this.clients[deviceId];
+          delete this.metadata[deviceId];
         }
+        return undefined;
+      }
 
-        // Client exists and is not disconnected, check in-memory cache
+      if (whatsappClient.status === 'disconnected') {
+        console.log(`[WhatsAppClientManager] Client marked as disconnected in database for device ${deviceId}`);
+        // Clean up memory
+        if (this.clients[deviceId]) {
+          delete this.clients[deviceId];
+          delete this.metadata[deviceId];
+        }
+        return undefined;
+      }
+
+      // Client exists and is active in database
+      // Check if we have it in memory (cache layer)
+      if (this.clients[deviceId]) {
+        console.log(`[WhatsAppClientManager] Client found in memory cache for device ${deviceId}`);
+
+        // Validate that the client is properly initialized and ready
         const client = this.clients[deviceId];
-        if (client) {
-          // Update last active timestamp
-          if (this.metadata[deviceId]) {
-            this.metadata[deviceId].lastActive = new Date();
-
-            // Update database with last active time
+        try {
+          // Check if client is ready and has proper state
+          if (client.info && client.info.wid) {
+            console.log(`[WhatsAppClientManager] Client is properly initialized for device ${deviceId}`);
+            // Update last active time in database
             await WhatsAppClient.findOneAndUpdate(
               { deviceId },
               { lastActive: new Date() }
-            ).catch(error => {
-              console.error(`[WhatsAppClientManager] Error updating last active time for device ${deviceId}:`, error);
-            });
-          }
-          return client;
-        } else if (whatsappClient.status === 'connected' && whatsappClient.sessionExists) {
-          // Client should be active according to database but isn't in memory
-          // This could happen after a server restart
-          console.log(`[WhatsAppClientManager] Client not in memory but should be active for device ${deviceId}`);
-          return undefined; // Let the caller handle initialization
-        }
-      } else {
-        // Fallback to Device collection for backward compatibility
-        const device = await Device.findById(deviceId);
-
-        if (!device || device.status === 'disconnected') {
-          // If device doesn't exist or is marked as disconnected in the database,
-          // remove from in-memory cache if it exists
-          if (this.clients[deviceId]) {
-            console.log(`[WhatsAppClientManager] Client exists in memory but is disconnected in database for device ${deviceId}`);
+            );
+            return client;
+          } else {
+            console.log(`[WhatsAppClientManager] Client in memory but not properly initialized for device ${deviceId}`);
+            // Client exists but is not ready - remove it and let it be recreated
             delete this.clients[deviceId];
             delete this.metadata[deviceId];
-            return undefined;
           }
-          return undefined;
-        }
-
-        // Device exists and is not disconnected, check in-memory cache
-        const client = this.clients[deviceId];
-        if (client) {
-          // Update last active timestamp
-          if (this.metadata[deviceId]) {
-            this.metadata[deviceId].lastActive = new Date();
-
-            // Update database with last active time
-            await Device.findByIdAndUpdate(deviceId, {
-              'sessionInfo.lastActive': new Date()
-            }).catch(error => {
-              console.error(`[WhatsAppClientManager] Error updating last active time for device ${deviceId}:`, error);
-            });
-
-            // Also update the WhatsAppClient collection
-            await WhatsAppClient.findOneAndUpdate(
-              { deviceId },
-              {
-                lastActive: new Date(),
-                status: device.status,
-                sessionExists: device.sessionInfo?.exists || false
-              },
-              { upsert: true }
-            ).catch(error => {
-              console.error(`[WhatsAppClientManager] Error updating WhatsAppClient for device ${deviceId}:`, error);
-            });
-          }
-          return client;
-        } else if (device.status === 'connected' && device.sessionInfo?.exists) {
-          // Client should be active according to database but isn't in memory
-          // This could happen after a server restart
-          console.log(`[WhatsAppClientManager] Client not in memory but should be active for device ${deviceId}`);
-          return undefined; // Let the caller handle initialization
+        } catch (error) {
+          console.error(`[WhatsAppClientManager] Error validating client state for device ${deviceId}:`, error);
+          // Client is corrupted - remove it
+          delete this.clients[deviceId];
+          delete this.metadata[deviceId];
         }
       }
-    } catch (error) {
-      console.error(`[WhatsAppClientManager] Error checking database for device ${deviceId}:`, error);
-    }
 
-    // Fallback to in-memory cache
-    return this.clients[deviceId];
+      // Client exists in database but not in memory - restore it
+      console.log(`[WhatsAppClientManager] Client exists in database but not in memory for device ${deviceId}, restoring from session`);
+
+      if (whatsappClient.sessionExists && whatsappClient.sessionPath) {
+        try {
+          const restoredClient = await this.restoreClientFromSession(deviceId, whatsappClient);
+          if (restoredClient) {
+            console.log(`[WhatsAppClientManager] Successfully restored client from session for device ${deviceId}`);
+            return restoredClient;
+          }
+        } catch (error) {
+          console.error(`[WhatsAppClientManager] Error restoring client from session for device ${deviceId}:`, error);
+        }
+      }
+
+      console.log(`[WhatsAppClientManager] Could not restore client for device ${deviceId}`);
+      return undefined;
+
+    } catch (error) {
+      console.error(`[WhatsAppClientManager] Error getting client for device ${deviceId}:`, error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Restore a client from session data stored in database
+   * @param deviceId The device ID
+   * @param whatsappClient The database record
+   * @returns The restored WhatsApp client instance or undefined
+   */
+  private async restoreClientFromSession(deviceId: string, whatsappClient: any): Promise<Client | undefined> {
+    try {
+      console.log(`[WhatsAppClientManager] Restoring client from session for device ${deviceId}`);
+
+      // Verify session files exist
+      if (!fs.existsSync(whatsappClient.sessionPath)) {
+        console.log(`[WhatsAppClientManager] Session path does not exist for device ${deviceId}: ${whatsappClient.sessionPath}`);
+        return undefined;
+      }
+
+      // Create client with stored configuration
+      const { Client, LocalAuth } = require('whatsapp-web.js');
+      const client = new Client({
+        authStrategy: new LocalAuth({
+          clientId: deviceId,
+          dataPath: whatsappClient.sessionPath
+        }),
+        puppeteer: whatsappClient.clientConfig?.puppeteerOptions || {
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-gpu'
+          ]
+        }
+      });
+
+      // Store in memory
+      this.clients[deviceId] = client;
+      this.metadata[deviceId] = {
+        lastActive: new Date(),
+        status: 'connecting',
+        initialized: false
+      };
+
+      // Set up event handlers for restored client
+      this.setupClientEventHandlers(deviceId, client);
+
+      // Initialize the client
+      await client.initialize();
+
+      return client;
+    } catch (error) {
+      console.error(`[WhatsAppClientManager] Error restoring client from session for device ${deviceId}:`, error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Set up event handlers for a client
+   * @param deviceId The device ID
+   * @param client The WhatsApp client
+   */
+  private setupClientEventHandlers(deviceId: string, client: Client): void {
+    client.on('ready', async () => {
+      console.log(`[WhatsAppClientManager] Restored client ready for device ${deviceId}`);
+      await this.markInitialized(deviceId);
+    });
+
+    client.on('disconnected', async () => {
+      console.log(`[WhatsAppClientManager] Restored client disconnected for device ${deviceId}`);
+      await this.removeClient(deviceId);
+    });
+
+    client.on('auth_failure', async () => {
+      console.log(`[WhatsAppClientManager] Restored client auth failure for device ${deviceId}`);
+      await this.removeClient(deviceId);
+    });
+  }
+
+  /**
+   * Restore a client from database record (public method for server startup)
+   * @param deviceId The device ID
+   * @param whatsappClient The database record
+   * @returns Promise that resolves when restoration is complete
+   */
+  async restoreClientFromDatabase(deviceId: string, whatsappClient: any): Promise<void> {
+    try {
+      console.log(`[WhatsAppClientManager] Restoring client from database for device ${deviceId}`);
+
+      // Check if client already exists in memory
+      if (this.clients[deviceId]) {
+        console.log(`[WhatsAppClientManager] Client already exists in memory for device ${deviceId}`);
+        return;
+      }
+
+      // Verify session path exists
+      if (!whatsappClient.sessionPath || !fs.existsSync(whatsappClient.sessionPath)) {
+        console.log(`[WhatsAppClientManager] Session path does not exist for device ${deviceId}: ${whatsappClient.sessionPath}`);
+        throw new Error(`Session path not found: ${whatsappClient.sessionPath}`);
+      }
+
+      // Create client with stored configuration
+      const { Client, LocalAuth } = require('whatsapp-web.js');
+      const client = new Client({
+        authStrategy: new LocalAuth({
+          clientId: deviceId,
+          dataPath: whatsappClient.sessionPath
+        }),
+        puppeteer: whatsappClient.clientConfig?.puppeteerOptions || {
+          headless: true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-gpu'
+          ]
+        }
+      });
+
+      // Store in memory
+      this.clients[deviceId] = client;
+      this.metadata[deviceId] = {
+        lastActive: new Date(),
+        status: 'connecting',
+        initialized: false
+      };
+
+      // Set up event handlers for restored client
+      this.setupClientEventHandlers(deviceId, client);
+
+      // Initialize the client
+      console.log(`[WhatsAppClientManager] Initializing restored client for device ${deviceId}`);
+      await client.initialize();
+
+      console.log(`[WhatsAppClientManager] Successfully restored and initialized client for device ${deviceId}`);
+    } catch (error) {
+      console.error(`[WhatsAppClientManager] Error restoring client from database for device ${deviceId}:`, error);
+
+      // Clean up on failure
+      if (this.clients[deviceId]) {
+        delete this.clients[deviceId];
+        delete this.metadata[deviceId];
+      }
+
+      throw error;
+    }
   }
 
   /**
@@ -263,27 +451,50 @@ class WhatsAppClientManager {
    * @param deviceId The device ID
    * @param metadata Optional metadata about the client
    */
-  async markInitialized(deviceId: string, metadata?: { name?: string; number?: string; wid?: string; platform?: string; phoneVersion?: string }): Promise<void> {
+  async markInitialized(deviceId: string, metadata?: { name?: string; number?: string; wid?: string; platform?: string; phoneVersion?: string; pushname?: string; profilePicUrl?: string }): Promise<void> {
     if (this.metadata[deviceId]) {
       // Update memory
       this.metadata[deviceId].initialized = true;
       this.metadata[deviceId].status = 'connected';
 
-      // Update the database
+      // Update the database with complete connection information
       try {
-        // Update status
-        await this.updateClientStatus(deviceId, 'connected');
+        const updateData: any = {
+          status: 'connected',
+          lastActive: new Date(),
+          'connectionInfo.isReady': true,
+          'connectionInfo.isAuthenticated': true,
+          'connectionInfo.isConnected': true,
+          'connectionInfo.lastSeen': new Date()
+        };
 
-        // Update metadata if provided
+        // Add metadata if provided
         if (metadata) {
-          await WhatsAppClient.findOneAndUpdate(
-            { deviceId },
-            { metadata },
-            { upsert: true }
-          );
+          updateData.metadata = metadata;
         }
+
+        await WhatsAppClient.findOneAndUpdate(
+          { deviceId },
+          updateData,
+          { upsert: true, new: true }
+        );
+
+        console.log(`[WhatsAppClientManager] Client marked as initialized and connected in database for device ${deviceId}`);
+
+        // Also update Device model for backward compatibility
+        await Device.findByIdAndUpdate(deviceId, {
+          status: 'connected',
+          'sessionInfo.lastActive': new Date(),
+          'sessionInfo.exists': true,
+          whatsappInfo: metadata ? {
+            name: metadata.pushname || metadata.name,
+            number: metadata.number,
+            profilePicUrl: metadata.profilePicUrl || ''
+          } : undefined
+        });
+
       } catch (error) {
-        console.error(`[WhatsAppClientManager] Error updating client status for device ${deviceId}:`, error);
+        console.error(`[WhatsAppClientManager] Error marking client as initialized for device ${deviceId}:`, error);
       }
     }
   }
@@ -891,6 +1102,27 @@ export const sendMessage = async (deviceId: string, to: string, message: string)
     console.log(`[WhatsApp] Sending message to ${formattedNumber} for device ${deviceId}`);
 
     try {
+      // Validate client is properly initialized and authenticated
+      console.log(`[WhatsApp] Validating client state for device ${deviceId}`);
+
+      // Check if client has proper info (indicates it's authenticated)
+      if (!client.info || !client.info.wid) {
+        console.log(`[WhatsApp] Client not properly authenticated for device ${deviceId} - missing client info`);
+
+        // Clean up the client
+        try {
+          await activeClients.removeClient(deviceId);
+        } catch (cleanupError) {
+          console.error(`[WhatsApp] Error cleaning up client for device ${deviceId}:`, cleanupError);
+        }
+
+        return {
+          success: false,
+          message: 'WhatsApp client not properly authenticated. Please reconnect.',
+          needsReconnect: true
+        };
+      }
+
       // Check client state before sending
       const state = await client.getState();
       console.log(`[WhatsApp] Client state before sending: ${state} for device ${deviceId}`);
@@ -898,8 +1130,7 @@ export const sendMessage = async (deviceId: string, to: string, message: string)
       if (state !== 'CONNECTED') {
         console.log(`[WhatsApp] Client not in CONNECTED state for device ${deviceId}, state: ${state}`);
 
-        // Instead of trying to reset the state, which can cause errors,
-        // we'll directly recommend reconnection
+        // Clean up the client and recommend reconnection
         console.log(`[WhatsApp] Recommending reconnection for device ${deviceId}`);
 
         // Update device status
@@ -1028,99 +1259,118 @@ export const getClient = (deviceId: string) => {
 // Restore active clients from database on server startup
 export const restoreActiveClients = async (): Promise<void> => {
   try {
-    console.log('[WhatsApp] Restoring active clients from database');
+    console.log('[WhatsApp] Restoring active clients from database (database-driven)');
 
-    // Find all devices with existing sessions
-    const devices = await Device.find({
-      'sessionInfo.exists': true
+    // Find all WhatsApp clients that should be active from the database
+    const whatsappClients = await WhatsAppClient.find({
+      status: { $in: ['connected', 'connecting'] }
     });
 
-    console.log(`[WhatsApp] Found ${devices.length} devices with existing sessions`);
+    console.log(`[WhatsApp] Found ${whatsappClients.length} active WhatsApp clients in database`);
 
-    // First, verify that the session files actually exist on disk
-    const verifiedDevices = [];
-    for (const device of devices) {
-      const deviceId = device._id.toString();
-      const sessionExists = await checkSessionExists(deviceId);
+    // Also check legacy Device records for backward compatibility
+    const legacyDevices = await Device.find({
+      'sessionInfo.exists': true,
+      status: 'connected'
+    });
 
-      if (sessionExists) {
-        verifiedDevices.push(device);
-      } else {
-        console.log(`[WhatsApp] Session files not found for device ${deviceId} despite database record. Updating database.`);
-        // Update the database to reflect the actual state
-        await Device.findByIdAndUpdate(deviceId, {
-          status: 'disconnected',
-          sessionInfo: {
-            exists: false,
-            lastActive: new Date()
-          }
-        });
-      }
-    }
+    console.log(`[WhatsApp] Found ${legacyDevices.length} legacy devices with sessions`);
 
-    console.log(`[WhatsApp] Verified ${verifiedDevices.length} devices with actual session files`);
+    // Combine both sources
+    const allActiveDevices = new Set();
 
-    // Initialize clients for devices with connected status
-    const connectedDevices = verifiedDevices.filter(device => device.status === 'connected');
-    console.log(`[WhatsApp] Found ${connectedDevices.length} devices with connected status`);
+    // Add WhatsApp clients
+    whatsappClients.forEach(client => {
+      allActiveDevices.add(client.deviceId);
+    });
 
-    for (const device of connectedDevices) {
+    // Add legacy devices
+    legacyDevices.forEach(device => {
+      allActiveDevices.add(device._id.toString());
+    });
+
+    console.log(`[WhatsApp] Total unique devices to restore: ${allActiveDevices.size}`);
+
+    // Restore each active device
+    for (const deviceId of allActiveDevices) {
       try {
-        const deviceId = device._id.toString();
-        console.log(`[WhatsApp] Restoring client for device ${deviceId}`);
+        console.log(`[WhatsApp] Attempting to restore client for device ${deviceId}`);
 
-        // Initialize client
-        const client = new Client({
-          authStrategy: new LocalAuth({
-            clientId: deviceId,
-            dataPath: getSessionsDir()
-          }),
-          puppeteer: {
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            headless: true
-          }
-        });
+        // Get the WhatsApp client record (primary source)
+        let whatsappClient = whatsappClients.find(c => c.deviceId === deviceId);
 
-        // Store in active clients using the manager
-        await activeClients.addClient(deviceId, client);
+        // If no WhatsApp client record, create one from legacy device
+        if (!whatsappClient) {
+          const legacyDevice = legacyDevices.find(d => d._id.toString() === deviceId);
+          if (legacyDevice) {
+            console.log(`[WhatsApp] Creating WhatsApp client record from legacy device ${deviceId}`);
 
-        // Initialize client (don't await to avoid blocking)
-        client.initialize().then(async () => {
-          console.log(`[WhatsApp] Client restored and initialized for device ${deviceId}`);
+            // Check if session files exist
+            const sessionPath = path.join(path.resolve(__dirname, '../../sessions'), deviceId.toString());
+            const sessionExists = fs.existsSync(sessionPath);
+            let sessionFiles: string[] = [];
 
-          // Update the last reconnect time
-          await Device.findByIdAndUpdate(deviceId, {
-            sessionInfo: {
-              exists: true,
-              lastActive: new Date(),
-              lastReconnect: new Date()
-            }
-          });
-
-        }).catch(async (error) => {
-          console.error(`[WhatsApp] Error initializing restored client for device ${deviceId}:`, error);
-          await activeClients.removeClient(deviceId);
-
-          // Update device status
-          try {
-            await Device.findByIdAndUpdate(deviceId, {
-              status: 'disconnected',
-              sessionInfo: {
-                exists: true, // Files exist but might be invalid
-                lastActive: new Date()
+            if (sessionExists) {
+              try {
+                sessionFiles = fs.readdirSync(sessionPath);
+              } catch (error) {
+                console.error(`[WhatsApp] Error reading session files for device ${deviceId}:`, error);
               }
-            });
-            console.log(`[WhatsApp] Updated device status to disconnected for device ${deviceId} after initialization error`);
-          } catch (updateError) {
-            console.error(`[WhatsApp] Error updating device status for device ${deviceId}:`, updateError);
+            }
+
+            // Create WhatsApp client record
+            whatsappClient = await WhatsAppClient.findOneAndUpdate(
+              { deviceId },
+              {
+                deviceId,
+                status: 'connected',
+                lastActive: legacyDevice.sessionInfo?.lastActive || new Date(),
+                sessionExists: sessionExists && sessionFiles.length > 0,
+                sessionPath,
+                sessionFiles,
+                connectionInfo: {
+                  isReady: true,
+                  isAuthenticated: true,
+                  isConnected: true
+                }
+              },
+              { upsert: true, new: true }
+            );
           }
-        });
+        }
+
+        if (!whatsappClient) {
+          console.log(`[WhatsApp] No client record found for device ${deviceId}, skipping`);
+          continue;
+        }
+
+        // Try to restore the client
+        await activeClients.restoreClientFromDatabase(deviceId.toString(), whatsappClient);
+
       } catch (error) {
-        console.error(`[WhatsApp] Error restoring client for device ${device._id}:`, error);
+        console.error(`[WhatsApp] Error restoring client for device ${deviceId}:`, error);
+
+        // Mark as disconnected if restoration fails
+        try {
+          await WhatsAppClient.findOneAndUpdate(
+            { deviceId },
+            {
+              status: 'disconnected',
+              'connectionInfo.isConnected': false,
+              'connectionInfo.isReady': false
+            }
+          );
+
+          await Device.findByIdAndUpdate(deviceId, {
+            status: 'disconnected'
+          });
+        } catch (updateError) {
+          console.error(`[WhatsApp] Error updating status for failed device ${deviceId}:`, updateError);
+        }
       }
     }
 
-    console.log('[WhatsApp] Finished restoring active clients');
+    console.log('[WhatsApp] Finished restoring active clients from database');
   } catch (error) {
     console.error('[WhatsApp] Error restoring active clients:', error);
   }
