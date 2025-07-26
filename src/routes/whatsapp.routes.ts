@@ -195,7 +195,7 @@ router.post('/disconnect/:deviceId', disconnectWhatsApp as any);
  *             required:
  *               - deviceId
  *               - to
- *               - message
+ *               - content
  *             properties:
  *               deviceId:
  *                 type: string
@@ -203,9 +203,9 @@ router.post('/disconnect/:deviceId', disconnectWhatsApp as any);
  *               to:
  *                 type: string
  *                 description: The recipient's phone number or group ID
- *               message:
+ *               content:
  *                 type: string
- *                 description: The message to send
+ *                 description: The text message content to send
  *     responses:
  *       200:
  *         description: Message sent successfully
@@ -241,6 +241,7 @@ router.post('/send-message', sendTextMessage as any);
  *             required:
  *               - deviceId
  *               - to
+ *               - type
  *               - file
  *             properties:
  *               deviceId:
@@ -249,6 +250,11 @@ router.post('/send-message', sendTextMessage as any);
  *               to:
  *                 type: string
  *                 description: The recipient's phone number or group ID
+ *               type:
+ *                 type: string
+ *                 enum: [image, video, audio, document]
+ *                 description: The type of file being sent
+ *                 example: image
  *               file:
  *                 type: string
  *                 format: binary
