@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import cors from 'cors';
@@ -9,6 +9,9 @@ import authRoutes from './routes/auth.routes';
 import deviceRoutes from './routes/device.routes';
 import whatsappRoutes from './routes/whatsapp.routes';
 import conversationRoutes from './routes/conversation.routes';
+// import webhookRoutes from './routes/webhook.routes';
+// import webhookSimpleRoutes from './routes/webhook-simple.routes';
+// import WebhookService from './services/webhook.service';
 import messageHistoryRoutes from './routes/message-history.routes';
 import contactRoutes from './routes/contact.routes';
 import qrcodeRoutes from './routes/qrcode.routes';
@@ -16,6 +19,10 @@ import { setupSocketHandlers } from './socket';
 import { restoreActiveClients } from './services/whatsapp.service';
 import swaggerSpec from './config/swagger';
 import { initializeShutdownManager } from './services/shutdown-manager.service';
+import WebhookManager from './services/webhook-manager.service';
+
+// Import webhook endpoints (JavaScript to avoid TypeScript issues)
+const { setupWebhookEndpoints, processIncomingMessage } = require('./webhook-endpoints.js');
 
 // Load environment variables
 dotenv.config();
@@ -38,6 +45,9 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Serve static files for webhook media
+app.use('/uploads', express.static('uploads'));
 
 // Swagger API Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
@@ -128,6 +138,27 @@ app.use('/api/whatsapp', conversationRoutes); // Add conversation routes under t
 app.use('/api/message-history', messageHistoryRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/qrcode', qrcodeRoutes);
+// app.use('/api/webhooks', webhookSimpleRoutes);
+
+// Set up webhook endpoints
+setupWebhookEndpoints(app);
+
+// Webhook status endpoint (inline to avoid circular dependency issues)
+app.get('/api/webhooks/status', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Webhook system is available',
+    status: 'ready',
+    endpoints: [
+      'POST /api/webhooks/device/:deviceId/configure',
+      'GET /api/webhooks/device/:deviceId/config',
+      'DELETE /api/webhooks/device/:deviceId/config',
+      'POST /api/webhooks/device/:deviceId/test',
+      'GET /api/webhooks/device/:deviceId/deliveries',
+      'GET /api/webhooks/device/:deviceId/stats'
+    ]
+  });
+});
 
 // Socket.io setup
 setupSocketHandlers(io);
@@ -138,12 +169,32 @@ mongoose.connect(MONGODB_URI)
   .then(async () => {
     console.log('Connected to MongoDB');
 
+    // Set up webhook processor to avoid circular dependency
+    try {
+      const webhookManager = WebhookManager.getInstance();
+      webhookManager.setWebhookProcessor(async (deviceId: string, message: any) => {
+        await processIncomingMessage(deviceId, message);
+      });
+      console.log('✅ Webhook processor configured - incoming messages will trigger webhooks');
+    } catch (error) {
+      console.error('❌ Error setting up webhook processor:', error);
+    }
+
     // Restore active WhatsApp clients from database
     try {
       await restoreActiveClients();
     } catch (error) {
       console.error('Error restoring active WhatsApp clients:', error);
     }
+
+    // Process pending webhook deliveries
+    // try {
+    //   const webhookService = WebhookService.getInstance();
+    //   await webhookService.processPendingDeliveries();
+    //   console.log('✅ Pending webhook deliveries processed');
+    // } catch (error) {
+    //   console.error('❌ Error processing pending webhook deliveries:', error);
+    // }
   })
   .catch((error) => {
     console.error('MongoDB connection error:', error);
@@ -151,7 +202,7 @@ mongoose.connect(MONGODB_URI)
   })
   .finally(() => {
     // Start server regardless of MongoDB connection status
-    const PORT = process.env.PORT || 3000; // Server port // Changed to 3000 to avoid conflicts
+    const PORT = process.env.PORT || 3000; // Server port configuration // Changed to 3000 to avoid conflicts
     server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });

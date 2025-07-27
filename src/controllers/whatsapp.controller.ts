@@ -409,13 +409,13 @@ export const sendFileMessage = async (req: Request, res: Response) => {
 // Send a location message
 export const sendLocationMessage = async (req: Request, res: Response) => {
   try {
-    const { deviceId, to, content } = req.body;
+    const { deviceId, to, latitude, longitude, description } = req.body;
     const userId = req.user._id;
 
-    if (!deviceId || !to || !content) {
+    if (!deviceId || !to || !latitude || !longitude) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: deviceId, to, content'
+        message: 'Missing required fields: deviceId, to, latitude, longitude'
       });
     }
 
@@ -430,21 +430,25 @@ export const sendLocationMessage = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Device is not connected to WhatsApp' });
     }
 
-    // Parse the location data
-    let location;
-    try {
-      location = JSON.parse(content);
-    } catch (e) {
+    // Validate latitude and longitude
+    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
       return res.status(400).json({
         success: false,
-        message: 'Invalid location data'
+        message: 'Latitude and longitude must be numbers'
       });
     }
 
-    if (!location.latitude || !location.longitude) {
+    if (latitude < -90 || latitude > 90) {
       return res.status(400).json({
         success: false,
-        message: 'Location must include latitude and longitude'
+        message: 'Latitude must be between -90 and 90'
+      });
+    }
+
+    if (longitude < -180 || longitude > 180) {
+      return res.status(400).json({
+        success: false,
+        message: 'Longitude must be between -180 and 180'
       });
     }
 
@@ -468,12 +472,12 @@ export const sendLocationMessage = async (req: Request, res: Response) => {
     // Format the phone number
     const formattedNumber = formatPhoneNumber(to);
 
-    // Create location object
+    // Create location object (WhatsApp.js expects string values)
     const locationObject = {
-      latitude: location.latitude,
-      longitude: location.longitude,
-      name: location.name || undefined,
-      address: location.address || undefined
+      latitude: latitude.toString(),
+      longitude: longitude.toString(),
+      name: description || undefined,
+      address: description || undefined
     };
 
     // Send the location
@@ -486,7 +490,7 @@ export const sendLocationMessage = async (req: Request, res: Response) => {
       deviceName: device.name,
       deviceNumber: device.whatsappInfo?.number,
       recipient: formattedNumber,
-      message: `Location: ${location.name || `${location.latitude},${location.longitude}`}`,
+      message: `Location: ${description || `${latitude},${longitude}`}`,
       messageType: 'location',
       status: 'sent',
       messageId: message.id._serialized,
@@ -542,13 +546,13 @@ export const sendLocationMessage = async (req: Request, res: Response) => {
 // Send a contact message
 export const sendContactMessage = async (req: Request, res: Response) => {
   try {
-    const { deviceId, to, content } = req.body;
+    const { deviceId, to, contact } = req.body;
     const userId = req.user._id;
 
-    if (!deviceId || !to || !content) {
+    if (!deviceId || !to || !contact) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: deviceId, to, content'
+        message: 'Missing required fields: deviceId, to, contact'
       });
     }
 
@@ -563,21 +567,18 @@ export const sendContactMessage = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Device is not connected to WhatsApp' });
     }
 
-    // Parse the contact data
-    let contact;
-    try {
-      contact = JSON.parse(content);
-    } catch (e) {
+    // Validate contact data (contact is already parsed from req.body)
+    if (!contact.name || !contact.phoneNumber) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid contact data'
+        message: 'Contact must include name and phoneNumber'
       });
     }
 
-    if (!contact.name || !contact.phones || !contact.phones.length) {
+    if (typeof contact.name !== 'string' || typeof contact.phoneNumber !== 'string') {
       return res.status(400).json({
         success: false,
-        message: 'Contact must include name and at least one phone number'
+        message: 'Contact name and phoneNumber must be strings'
       });
     }
 
@@ -699,10 +700,16 @@ const createVCard = (contact: any): string => {
   vCard += `FN:${contact.name}\n`;
   vCard += `N:${contact.name};;;;\n`;
 
-  // Add phone numbers
-  contact.phones.forEach((phone: string, index: number) => {
-    vCard += `TEL;type=CELL${index === 0 ? ';type=pref' : ''}:${phone}\n`;
-  });
+  // Add phone numbers - handle both phoneNumber (singular) and phones (array) formats
+  if (contact.phoneNumber) {
+    // Single phone number format (from Swagger API)
+    vCard += `TEL;type=CELL;type=pref:${contact.phoneNumber}\n`;
+  } else if (contact.phones && Array.isArray(contact.phones)) {
+    // Multiple phone numbers format (legacy)
+    contact.phones.forEach((phone: string, index: number) => {
+      vCard += `TEL;type=CELL${index === 0 ? ';type=pref' : ''}:${phone}\n`;
+    });
+  }
 
   // Add emails if available
   if (contact.emails && contact.emails.length) {

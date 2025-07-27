@@ -393,6 +393,9 @@ export const generateQRCode = async (req: Request, res: Response) => {
         }
       });
 
+      // Note: Webhook message listener is handled by the WhatsApp client manager
+      // when the client is added to the active clients manager
+
       // Handle disconnection
       client.on('disconnected', async (reason) => {
         console.log(`[QR Code] Client disconnected for device ${deviceId}:`, reason);

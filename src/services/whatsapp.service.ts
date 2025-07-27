@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import Device from '../models/device.model';
 import WhatsAppClient from '../models/whatsapp-client.model';
+import WebhookManager from './webhook-manager.service';
 
 /**
  * WhatsAppClientManager - A class to manage WhatsApp client instances
@@ -27,6 +28,8 @@ class WhatsAppClientManager {
       initialized: boolean;
     }
   } = {};
+
+
 
   /**
    * Add a client to the active clients collection and update the database
@@ -270,6 +273,17 @@ class WhatsAppClientManager {
     client.on('auth_failure', async () => {
       console.log(`[WhatsAppClientManager] Restored client auth failure for device ${deviceId}`);
       await this.removeClient(deviceId);
+    });
+
+    // Set up webhook message listener
+    client.on('message', async (message) => {
+      try {
+        // Process message through webhook manager
+        const webhookManager = WebhookManager.getInstance();
+        await webhookManager.processMessage(deviceId, message);
+      } catch (error) {
+        console.error(`[WhatsAppClientManager] Error processing incoming message for device ${deviceId}:`, error);
+      }
     });
   }
 
