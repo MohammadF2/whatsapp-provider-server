@@ -7,7 +7,7 @@ export interface IMessageHistory extends Document {
   deviceNumber?: string;
   recipient: string;
   message: string;
-  messageType: 'text' | 'image' | 'video' | 'audio' | 'document' | 'location' | 'contact' | 'voice';
+  messageType: 'text' | 'image' | 'video' | 'audio' | 'document' | 'location' | 'contact' | 'voice' | 'poll' | 'buttons' | 'product' | 'order';
   status: 'sent' | 'failed' | 'pending';
   errorMessage?: string;
   messageId?: string;
@@ -47,7 +47,7 @@ const messageHistorySchema = new Schema({
   },
   messageType: {
     type: String,
-    enum: ['text', 'image', 'video', 'audio', 'document', 'location', 'contact', 'voice'],
+    enum: ['text', 'image', 'video', 'audio', 'document', 'location', 'contact', 'voice', 'poll', 'buttons', 'product', 'order'],
     default: 'text',
     index: true
   },

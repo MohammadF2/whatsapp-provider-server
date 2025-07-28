@@ -62,9 +62,16 @@ function getMessageType(message) {
     }
   }
 
+  // Handle new message types
   if (message.type === 'location') return 'location';
   if (message.type === 'vcard') return 'contact';
   if (message.type === 'chat') return 'text';
+  if (message.type === 'poll_creation') return 'poll';
+  if (message.type === 'vote_update') return 'poll_vote';
+  if (message.type === 'product') return 'product';
+  if (message.type === 'order') return 'order';
+  if (message.type === 'buttons_response') return 'button_response';
+  if (message.type === 'list_response') return 'list_response';
 
   return message.type || 'unknown';
 }
@@ -80,7 +87,13 @@ function shouldForwardMessageType(config, messageType) {
     'sticker': 'sticker',
     'location': 'location',
     'contact': 'contact',
-    'vcard': 'contact'
+    'vcard': 'contact',
+    'poll': 'poll',
+    'poll_vote': 'poll_vote',
+    'product': 'product',
+    'order': 'order',
+    'button_response': 'button_response',
+    'list_response': 'list_response'
   };
 
   const configKey = typeMap[messageType];
@@ -172,6 +185,100 @@ async function addMessageContent(payload, message) {
         phoneNumber: vcard.waid || '',
         vcard: vcard.vcard
       };
+    }
+
+    // Add poll content
+    if (message.type === 'poll_creation') {
+      try {
+        const poll = await message.getPoll();
+        payload.content.poll = {
+          name: poll.name,
+          options: poll.options,
+          allowMultipleAnswers: poll.allowMultipleAnswers,
+          messageSecret: poll.messageSecret
+        };
+      } catch (pollError) {
+        console.error(`[Webhook] Error getting poll data:`, pollError);
+        payload.content.poll = { error: 'Failed to retrieve poll data' };
+      }
+    }
+
+    // Add poll vote content
+    if (message.type === 'vote_update') {
+      try {
+        const vote = await message.getVote();
+        payload.content.pollVote = {
+          voter: vote.voter,
+          selectedOptions: vote.selectedOptions,
+          parentMessageId: vote.parentMessage?.id?._serialized,
+          interractedAtTs: vote.interractedAtTs
+        };
+      } catch (voteError) {
+        console.error(`[Webhook] Error getting vote data:`, voteError);
+        payload.content.pollVote = { error: 'Failed to retrieve vote data' };
+      }
+    }
+
+    // Add product content
+    if (message.type === 'product') {
+      try {
+        const product = await message.getProduct();
+        payload.content.product = {
+          id: product.id,
+          name: product.name,
+          price: product.price,
+          currency: product.currency,
+          quantity: product.quantity,
+          thumbnailUrl: product.thumbnailUrl,
+          data: product.data
+        };
+      } catch (productError) {
+        console.error(`[Webhook] Error getting product data:`, productError);
+        payload.content.product = { error: 'Failed to retrieve product data' };
+      }
+    }
+
+    // Add order content
+    if (message.type === 'order') {
+      try {
+        const order = await message.getOrder();
+        payload.content.order = {
+          createdAt: order.createdAt,
+          currency: order.currency,
+          subtotal: order.subtotal,
+          total: order.total
+        };
+      } catch (orderError) {
+        console.error(`[Webhook] Error getting order data:`, orderError);
+        payload.content.order = { error: 'Failed to retrieve order data' };
+      }
+    }
+
+    // Add button response content
+    if (message.type === 'buttons_response') {
+      try {
+        payload.content.buttonResponse = {
+          selectedButtonId: message.selectedButtonId || message.body,
+          displayText: message.body
+        };
+      } catch (buttonError) {
+        console.error(`[Webhook] Error getting button response data:`, buttonError);
+        payload.content.buttonResponse = { error: 'Failed to retrieve button response data' };
+      }
+    }
+
+    // Add list response content
+    if (message.type === 'list_response') {
+      try {
+        payload.content.listResponse = {
+          selectedRowId: message.selectedRowId,
+          title: message.listResponse?.title,
+          description: message.listResponse?.description
+        };
+      } catch (listError) {
+        console.error(`[Webhook] Error getting list response data:`, listError);
+        payload.content.listResponse = { error: 'Failed to retrieve list response data' };
+      }
     }
 
   } catch (error) {
@@ -345,7 +452,13 @@ function setupWebhookEndpoints(app) {
           sticker: true,
           location: true,
           contact: true,
-          voice: true
+          voice: true,
+          poll: true,
+          poll_vote: true,
+          product: true,
+          order: true,
+          button_response: true,
+          list_response: true
         },
         retryConfig = {
           maxRetries: 3,

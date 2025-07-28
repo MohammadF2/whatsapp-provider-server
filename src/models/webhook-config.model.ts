@@ -18,6 +18,12 @@ export interface IWebhookConfig extends Document {
     location: boolean;
     contact: boolean;
     voice: boolean;
+    poll: boolean;
+    poll_vote: boolean;
+    product: boolean;
+    order: boolean;
+    button_response: boolean;
+    list_response: boolean;
   };
   retryConfig: {
     maxRetries: number;
@@ -75,7 +81,13 @@ const WebhookConfigSchema = new Schema<IWebhookConfig>(
       sticker: { type: Boolean, default: true },
       location: { type: Boolean, default: true },
       contact: { type: Boolean, default: true },
-      voice: { type: Boolean, default: true }
+      voice: { type: Boolean, default: true },
+      poll: { type: Boolean, default: true },
+      poll_vote: { type: Boolean, default: true },
+      product: { type: Boolean, default: true },
+      order: { type: Boolean, default: true },
+      button_response: { type: Boolean, default: true },
+      list_response: { type: Boolean, default: true }
     },
     retryConfig: {
       maxRetries: { type: Number, default: 3 },
