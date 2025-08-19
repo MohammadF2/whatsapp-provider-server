@@ -33,7 +33,7 @@ const router = Router();
  *                 services:
  *                   type: object
  */
-router.get('/status', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+router.get('/status', authenticateToken, async (req: Request, res: Response) => {
   try {
     const status = {
       decodoEnabled: isDecodoEnabled(),
@@ -134,7 +134,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response): Pr
  *       200:
  *         description: Monitoring metrics
  */
-router.get('/metrics', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+router.get('/metrics', authenticateToken, async (req: Request, res: Response) => {
   try {
     if (!isMonitoringEnabled()) {
       res.status(400).json({
@@ -175,7 +175,7 @@ router.get('/metrics', authenticateToken, async (req: Request, res: Response): P
  *       200:
  *         description: Active alerts
  */
-router.get('/alerts', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+router.get('/alerts', authenticateToken, async (req: Request, res: Response) => {
   try {
     if (!isMonitoringEnabled()) {
       res.status(400).json({
@@ -221,7 +221,7 @@ router.get('/alerts', authenticateToken, async (req: Request, res: Response): Pr
  *       200:
  *         description: Alert resolved
  */
-router.post('/alerts/:alertId/resolve', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+router.post('/alerts/:alertId/resolve', authenticateToken, async (req: Request, res: Response) => {
   try {
     if (!isMonitoringEnabled()) {
       res.status(400).json({
@@ -280,7 +280,7 @@ router.post('/alerts/:alertId/resolve', authenticateToken, async (req: Request, 
  *       200:
  *         description: Proxy device mappings
  */
-router.get('/mappings', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+router.get('/mappings', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { deviceId, status } = req.query;
     const filter: any = {};
@@ -329,7 +329,7 @@ router.get('/mappings', authenticateToken, async (req: Request, res: Response): 
  *       200:
  *         description: Device queue status
  */
-router.get('/queue/:deviceId', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+router.get('/queue/:deviceId', authenticateToken, async (req: Request, res: Response) => {
   try {
     if (!isMessageQueueEnabled()) {
       res.status(400).json({
@@ -388,7 +388,7 @@ router.get('/queue/:deviceId', authenticateToken, async (req: Request, res: Resp
  *       200:
  *         description: Queue cleared
  */
-router.post('/queue/:deviceId/clear', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+router.post('/queue/:deviceId/clear', authenticateToken, async (req: Request, res: Response) => {
   try {
     if (!isMessageQueueEnabled()) {
       res.status(400).json({
