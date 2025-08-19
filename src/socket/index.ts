@@ -1,7 +1,9 @@
 import { Server as SocketIOServer } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { initWhatsAppClient } from '../services/whatsapp.service';
+import { initWhatsAppClientWithSelenium } from '../services/whatsapp-selenium.service';
 import User from '../models/user.model';
+import Device from '../models/device.model';
 
 interface JwtPayload {
   id: string;
@@ -45,9 +47,7 @@ export const setupSocketHandlers = (io: SocketIOServer) => {
 
   // Connection handler
   io.on('connection', (socket) => {
-    console.log(`[Socket] Socket connected: ${socket.id}, user: ${socket.data.user.name}`);
-
-    // Initialize WhatsApp client
+    console.log(`[Socket] Socket connected: ${socket.id}, user: ${socket.data.user.name}`);    // Initialize WhatsApp client
     socket.on('whatsapp:init', async ({ deviceId }) => {
       console.log(`[Socket] WhatsApp init request received for device ${deviceId}, socket: ${socket.id}`);
       try {
@@ -55,9 +55,29 @@ export const setupSocketHandlers = (io: SocketIOServer) => {
         const userId = socket.data.user._id;
         console.log(`[Socket] User ID from socket: ${userId}, socket: ${socket.id}`);
 
-        console.log(`[Socket] Initializing WhatsApp client for device ${deviceId}, socket: ${socket.id}`);
-        // Initialize WhatsApp client
-        const result = await initWhatsAppClient(deviceId, socket.id, io);
+        // Get device information to determine whether to use Selenium
+        const device = await Device.findOne({ _id: deviceId, user: userId });
+        if (!device) {
+          console.log(`[Socket] Device not found or doesn't belong to user: ${deviceId}`);
+          socket.emit('whatsapp:error', {
+            deviceId,
+            message: 'Device not found or unauthorized'
+          });
+          return;
+        }
+
+        let result;
+        // Check if device has Selenium configuration
+        if (device.seleniumConfig?.browserType) {
+          console.log(`[Socket] Initializing WhatsApp client with Selenium for device ${deviceId}, browser: ${device.seleniumConfig.browserType}`);
+          // Initialize WhatsApp client with Selenium
+          result = await initWhatsAppClientWithSelenium(deviceId, socket.id, io);
+        } else {
+          console.log(`[Socket] Initializing WhatsApp client with default method for device ${deviceId}`);
+          // Initialize WhatsApp client with default method
+          result = await initWhatsAppClient(deviceId, socket.id, io);
+        }
+
         console.log(`[Socket] WhatsApp client initialization result for device ${deviceId}: ${result.success ? 'success' : 'failed'}`);
 
         if (!result.success) {

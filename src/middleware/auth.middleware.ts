@@ -42,3 +42,6 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     return res.status(401).json({ message: 'Token is not valid' });
   }
 };
+
+// Alias for backward compatibility
+export const authenticateToken = authenticate;

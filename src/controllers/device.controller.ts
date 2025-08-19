@@ -5,13 +5,26 @@ import { disconnectWhatsAppClient } from '../services/whatsapp.service';
 // Create a new device
 export const createDevice = async (req: Request, res: Response) => {
   try {
-    const { name } = req.body;
+    const { 
+      name, 
+      browserType = 'chrome', 
+      headless = false,
+      userAgent,
+      autoConnect = true
+    } = req.body;
+    
     const userId = req.user._id;
 
     const device = await Device.create({
       name,
       user: userId,
-      status: 'disconnected'
+      status: 'disconnected',
+      seleniumConfig: {
+        browserType,
+        headless,
+        userAgent,
+        autoConnect
+      }
     });
 
     res.status(201).json(device);
@@ -56,11 +69,32 @@ export const updateDevice = async (req: Request, res: Response) => {
   try {
     const deviceId = req.params.id;
     const userId = req.user._id;
-    const { name } = req.body;
+    const { 
+      name,
+      browserType,
+      headless,
+      userAgent,
+      autoConnect
+    } = req.body;
+    
+    // Build update object
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    
+    // Handle selenium config updates
+    if (browserType !== undefined || headless !== undefined || 
+        userAgent !== undefined || autoConnect !== undefined) {
+      updateData.seleniumConfig = {};
+      
+      if (browserType !== undefined) updateData.seleniumConfig.browserType = browserType;
+      if (headless !== undefined) updateData.seleniumConfig.headless = headless;
+      if (userAgent !== undefined) updateData.seleniumConfig.userAgent = userAgent;
+      if (autoConnect !== undefined) updateData.seleniumConfig.autoConnect = autoConnect;
+    }
 
     const device = await Device.findOneAndUpdate(
       { _id: deviceId, user: userId },
-      { name },
+      updateData, // Use the complete updateData object instead of just name
       { new: true }
     );
 
