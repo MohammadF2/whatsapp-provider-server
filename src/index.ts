@@ -15,11 +15,16 @@ import conversationRoutes from './routes/conversation.routes';
 import messageHistoryRoutes from './routes/message-history.routes';
 import contactRoutes from './routes/contact.routes';
 import qrcodeRoutes from './routes/qrcode.routes';
+import proxyRoutes from './routes/proxy.routes';
 import { setupSocketHandlers } from './socket';
 import { restoreActiveClients } from './services/whatsapp.service';
 import swaggerSpec from './config/swagger';
 import { initializeShutdownManager } from './services/shutdown-manager.service';
 import WebhookManager from './services/webhook-manager.service';
+import { getProxyMonitoringService, destroyProxyMonitoringService } from './services/proxy-monitoring.service';
+import { getDecodoProxyService, destroyDecodoProxyService } from './services/decodo-proxy.service';
+import { getMessageQueueService, destroyMessageQueueService } from './services/message-queue.service';
+import { isDecodoEnabled, isMessageQueueEnabled, isMonitoringEnabled } from './config/proxy.config';
 
 // Import webhook endpoints (JavaScript to avoid TypeScript issues)
 const { setupWebhookEndpoints, processIncomingMessage } = require('./webhook-endpoints.js');
@@ -138,6 +143,7 @@ app.use('/api/whatsapp', conversationRoutes); // Add conversation routes under t
 app.use('/api/message-history', messageHistoryRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/qrcode', qrcodeRoutes);
+app.use('/api/proxy', proxyRoutes);
 // app.use('/api/webhooks', webhookSimpleRoutes);
 
 // Set up webhook endpoints
@@ -180,6 +186,32 @@ mongoose.connect(MONGODB_URI)
       console.error('❌ Error setting up webhook processor:', error);
     }
 
+    // Initialize proxy and monitoring services
+    try {
+      console.log('🔧 Initializing proxy and monitoring services...');
+
+      // Initialize Decodo proxy service if enabled
+      if (isDecodoEnabled()) {
+        const proxyService = getDecodoProxyService();
+        console.log('✅ Decodo proxy service initialized');
+      }
+
+      // Initialize message queue service if enabled
+      if (isMessageQueueEnabled()) {
+        const messageQueueService = getMessageQueueService();
+        console.log('✅ Message queue service initialized');
+      }
+
+      // Initialize monitoring service if enabled
+      if (isMonitoringEnabled()) {
+        const monitoringService = getProxyMonitoringService();
+        console.log('✅ Proxy monitoring service initialized');
+      }
+
+    } catch (error) {
+      console.error('❌ Error initializing proxy services:', error);
+    }
+
     // Restore active WhatsApp clients from database
     try {
       await restoreActiveClients();
@@ -213,4 +245,29 @@ initializeShutdownManager({
   shutdownTimeoutMs: 30000, // 30 seconds
   enableLogging: true,
   forceExitAfterTimeout: true,
+});
+
+// Add cleanup handlers for proxy services
+process.on('SIGTERM', async () => {
+  console.log('🧹 Cleaning up proxy and monitoring services...');
+  try {
+    destroyProxyMonitoringService();
+    destroyMessageQueueService();
+    destroyDecodoProxyService();
+    console.log('✅ Proxy services cleaned up successfully');
+  } catch (error) {
+    console.error('❌ Error cleaning up proxy services:', error);
+  }
+});
+
+process.on('SIGINT', async () => {
+  console.log('🧹 Cleaning up proxy and monitoring services...');
+  try {
+    destroyProxyMonitoringService();
+    destroyMessageQueueService();
+    destroyDecodoProxyService();
+    console.log('✅ Proxy services cleaned up successfully');
+  } catch (error) {
+    console.error('❌ Error cleaning up proxy services:', error);
+  }
 });

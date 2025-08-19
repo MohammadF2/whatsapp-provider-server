@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Provider - Proxy Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .header {
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .endpoint {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .method {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .get { background: #28a745; color: white; }
+        .post { background: #007bff; color: white; }
+        .url {
+            font-family: monospace;
+            background: #e9ecef;
+            padding: 8px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .online { background: #d4edda; color: #155724; }
+        .offline { background: #f8d7da; color: #721c24; }
+        .warning { background: #fff3cd; color: #856404; }
+        .auth-section {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .test-button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .test-button:hover {
+            background: #0056b3;
+        }
+        .result {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 WhatsApp Provider - Proxy Dashboard</h1>
+        <p>Monitor and manage your Decodo mobile proxy integration</p>
+    </div>
+
+    <div class="card">
+        <h2>📊 System Status</h2>
+        <div id="systemStatus">
+            <span class="status online">🟢 Server Online</span>
+            <span class="status online">🟢 Decodo Enabled</span>
+            <span class="status online">🟢 Queue Active</span>
+            <span class="status warning">⚠️ 9 Alerts</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>🔐 Authentication</h2>
+        <div class="auth-section">
+            <p><strong>⚠️ Important:</strong> All proxy endpoints require authentication!</p>
+            <p>You need to login first to get an access token.</p>
+            
+            <div>
+                <input type="email" id="email" placeholder="Email" style="padding: 8px; margin: 5px;">
+                <input type="password" id="password" placeholder="Password" style="padding: 8px; margin: 5px;">
+                <button class="test-button" onclick="login()">Login</button>
+            </div>
+            
+            <div id="authResult" class="result" style="display: none;"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>🔗 Proxy API Endpoints</h2>
+        <p><strong>Base URL:</strong> <code>http://localhost:3001</code></p>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>Proxy Status</strong>
+            <div class="url">/api/proxy/status</div>
+            <p>Returns the status of all proxy services including Decodo, message queue, and monitoring.</p>
+            <button class="test-button" onclick="testEndpoint('/api/proxy/status')">Test</button>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>Monitoring Metrics</strong>
+            <div class="url">/api/proxy/metrics?limit=5</div>
+            <p>Returns historical monitoring metrics and performance data.</p>
+            <button class="test-button" onclick="testEndpoint('/api/proxy/metrics?limit=5')">Test</button>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>Active Alerts</strong>
+            <div class="url">/api/proxy/alerts</div>
+            <p>Returns active monitoring alerts and their severity levels.</p>
+            <button class="test-button" onclick="testEndpoint('/api/proxy/alerts')">Test</button>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>Proxy Mappings</strong>
+            <div class="url">/api/proxy/mappings?limit=10</div>
+            <p>Returns proxy-device mappings and their current status.</p>
+            <button class="test-button" onclick="testEndpoint('/api/proxy/mappings?limit=10')">Test</button>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>Queue Status</strong>
+            <div class="url">/api/proxy/queue/{deviceId}</div>
+            <p>Returns message queue status for a specific device.</p>
+            <input type="text" id="deviceId" placeholder="Device ID" style="padding: 8px; margin: 5px;">
+            <button class="test-button" onclick="testQueueEndpoint()">Test</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>📋 Test Results</h2>
+        <div id="testResults" class="result">
+            Click "Test" buttons above to see API responses here...
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>🔧 Quick Fixes</h2>
+        <div class="endpoint">
+            <h4>❌ Error: "Cannot GET /api/api/proxy/status"</h4>
+            <p><strong>Problem:</strong> Double /api in URL</p>
+            <p><strong>Solution:</strong> Use <code>/api/proxy/status</code> instead of <code>/api/api/proxy/status</code></p>
+        </div>
+        
+        <div class="endpoint">
+            <h4>🔐 Error: "No token, authorization denied"</h4>
+            <p><strong>Problem:</strong> Missing authentication</p>
+            <p><strong>Solution:</strong> Login first using the form above, then test endpoints</p>
+        </div>
+    </div>
+
+    <script>
+        let authToken = null;
+        const baseUrl = 'http://localhost:3001';
+
+        async function login() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            if (!email || !password) {
+                showAuthResult('Please enter email and password', 'error');
+                return;
+            }
+
+            try {
+                // Try to register first (in case user doesn't exist)
+                try {
+                    await fetch(`${baseUrl}/api/auth/register`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: 'Test User', email, password })
+                    });
+                } catch (e) {
+                    // Ignore registration errors (user might already exist)
+                }
+
+                // Login
+                const response = await fetch(`${baseUrl}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok && data.token) {
+                    authToken = data.token;
+                    showAuthResult(`✅ Login successful! Token: ${data.token.substring(0, 20)}...`, 'success');
+                } else {
+                    showAuthResult(`❌ Login failed: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                showAuthResult(`❌ Login error: ${error.message}`, 'error');
+            }
+        }
+
+        function showAuthResult(message, type) {
+            const resultDiv = document.getElementById('authResult');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = message;
+            resultDiv.style.color = type === 'error' ? '#721c24' : '#155724';
+        }
+
+        async function testEndpoint(endpoint) {
+            if (!authToken) {
+                showResult('❌ Please login first to get an authentication token');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${baseUrl}${endpoint}`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+                showResult(`✅ ${endpoint}\nStatus: ${response.status}\nResponse:\n${JSON.stringify(data, null, 2)}`);
+            } catch (error) {
+                showResult(`❌ ${endpoint}\nError: ${error.message}`);
+            }
+        }
+
+        async function testQueueEndpoint() {
+            const deviceId = document.getElementById('deviceId').value;
+            if (!deviceId) {
+                showResult('❌ Please enter a device ID');
+                return;
+            }
+            await testEndpoint(`/api/proxy/queue/${deviceId}`);
+        }
+
+        function showResult(message) {
+            document.getElementById('testResults').innerHTML = message;
+        }
+
+        // Auto-test server connectivity on load
+        window.onload = async function() {
+            try {
+                const response = await fetch(`${baseUrl}/api`);
+                const data = await response.json();
+                if (data.status === 'online') {
+                    showResult('🟢 Server is online and responding');
+                }
+            } catch (error) {
+                showResult('❌ Server connection failed: ' + error.message);
+            }
+        };
+    </script>
+</body>
+</html>

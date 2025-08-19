@@ -2,11 +2,14 @@ import { Client, LocalAuth } from 'whatsapp-web.js';
 import seleniumDriverManager from './selenium.service';
 import Device from '../models/device.model';
 import WhatsAppClient from '../models/whatsapp-client.model';
+import ProxyDeviceMapping from '../models/proxy-device-mapping.model';
 import { WebDriver } from 'selenium-webdriver';
 import qrcode from 'qrcode';
 import path from 'path';
 import fs from 'fs';
 import CustomBrowserLauncher from './custom-browser-launcher';
+import { getDecodoProxyService, ProxyInfo } from './decodo-proxy.service';
+import { getProxyConfig, getProxyCountry, isDecodoEnabled } from '../config/proxy.config';
 
 // Get sessions directory path
 const getSessionsDir = () => {
@@ -47,6 +50,74 @@ class SeleniumWhatsAppManager {
     }
   } = {};
 
+  // Proxy service for mobile proxy integration
+  private proxyService: any = null;
+
+  constructor() {
+    this.initializeProxyService();
+  }
+
+  /**
+   * Initialize proxy service if enabled
+   */
+  private initializeProxyService(): void {
+    try {
+      if (isDecodoEnabled()) {
+        const config = getProxyConfig();
+        this.proxyService = getDecodoProxyService(config.decodo);
+        console.log('[SeleniumWhatsAppManager] Decodo proxy service initialized');
+      }
+    } catch (error) {
+      console.error('[SeleniumWhatsAppManager] Error initializing proxy service:', error);
+    }
+  }
+
+  /**
+   * Get or assign proxy for device
+   */
+  private async getProxyForDevice(deviceId: string, deviceCountry?: string): Promise<ProxyInfo | null> {
+    if (!this.proxyService) {
+      return null;
+    }
+
+    try {
+      // Check if device already has a proxy mapping
+      let proxyMapping = await ProxyDeviceMapping.findActiveByDevice(deviceId);
+
+      if (proxyMapping && proxyMapping.isHealthy()) {
+        console.log(`[SeleniumWhatsAppManager] Using existing proxy for device ${deviceId}`);
+        return {
+          id: proxyMapping.proxyId,
+          country: proxyMapping.proxyConfig.country,
+          city: proxyMapping.proxyConfig.city,
+          carrier: proxyMapping.proxyConfig.carrier,
+          networkType: proxyMapping.proxyConfig.networkType,
+          endpoint: proxyMapping.proxyConfig.endpoint,
+          port: proxyMapping.proxyConfig.port,
+          isActive: true,
+        };
+      }
+
+      // Determine target country for proxy
+      const targetCountry = deviceCountry ? getProxyCountry(deviceCountry) : 'US';
+
+      // Get new proxy from Decodo service
+      const proxy = await this.proxyService.getProxyForDevice(deviceId, {
+        country: targetCountry,
+        networkType: '4G',
+      });
+
+      if (proxy) {
+        console.log(`[SeleniumWhatsAppManager] Assigned new proxy ${proxy.id} for device ${deviceId}`);
+      }
+
+      return proxy;
+    } catch (error) {
+      console.error(`[SeleniumWhatsAppManager] Error getting proxy for device ${deviceId}:`, error);
+      return null;
+    }
+  }
+
   /**
    * Initialize a WhatsApp client with Selenium WebDriver for a device
    * @param deviceId The device ID
@@ -74,15 +145,29 @@ class SeleniumWhatsAppManager {
         // Fallback to existing WhatsApp Web.js implementation
         return this.initializeDefaultClient(deviceId, socketId, io);
       }      console.log(`[SeleniumWhatsAppManager] Using Selenium for device ${deviceId}`);
-      const { browserType, headless, userAgent, autoConnect } = device.seleniumConfig;      // Initialize Selenium WebDriver
+      const { browserType, headless, userAgent } = device.seleniumConfig;
+
+      // Get proxy configuration for device
+      const proxy = await this.getProxyForDevice(deviceId);
+
+      // Prepare driver options with proxy support
+      const driverOptions: any = {
+        headless: headless === true,  // Convert to boolean explicitly for type safety
+        userAgent,
+        extraArgs: ['--disable-notifications']
+      };
+
+      // Add proxy configuration if available
+      if (proxy && this.proxyService) {
+        driverOptions.extraArgs.push(`--proxy-server=http://${proxy.endpoint}:${proxy.port}`);
+        console.log(`[SeleniumWhatsAppManager] Using proxy ${proxy.id} for device ${deviceId}`);
+      }
+
+      // Initialize Selenium WebDriver
       const driver = await seleniumDriverManager.createDriver(
-        deviceId, 
-        browserType, 
-        {
-          headless: headless === true,  // Convert to boolean explicitly for type safety
-          userAgent,
-          extraArgs: ['--disable-notifications']
-        }
+        deviceId,
+        browserType,
+        driverOptions
       );
 
       // Store driver reference

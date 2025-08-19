@@ -3,6 +3,7 @@ import Device from '../models/device.model';
 import MessageHistory from '../models/message-history.model';
 import {
   sendMessage,
+  sendMessageQueued,
   disconnectWhatsAppClient,
   testWhatsAppConnection as testWhatsAppConnectionService,
   activeClients
@@ -35,48 +36,37 @@ export const sendWhatsAppMessage = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Device is not connected to WhatsApp' });
     }
 
-    // Determine whether to use Selenium based on device configuration
-    let result;
-    if (device.seleniumConfig?.browserType) {
-      console.log(`[WhatsApp Controller] Using Selenium for device ${deviceId}`);
-      result = await sendMessageWithSelenium(deviceId, to, message);
-    } else {
-      console.log(`[WhatsApp Controller] Using default WhatsApp client for device ${deviceId}`);
-      result = await sendMessage(deviceId, to, message);
-    }
+    // Always use queued message sending for better rate limiting and proxy management
+    console.log(`[WhatsApp Controller] Using queued message sending for device ${deviceId}`);
+    const result = await sendMessageQueued(deviceId, to, message, {
+      priority: 'normal',
+      type: 'text',
+      maxAttempts: 3,
+      metadata: {
+        source: 'api',
+        useSelenium: !!device.seleniumConfig?.browserType,
+        userId: userId.toString()
+      }
+    });
     
     if (result.success) {
       res.json({ success: true, messageId: result.messageId });
     } else {
-      // Check if the device needs to be reconnected
-      if (result.needsReconnect) {
-        // Update device status to disconnected
-        await Device.findByIdAndUpdate(deviceId, { status: 'disconnected' });
+      // Save message to history with failed status
+      await MessageHistory.create({
+        deviceId,
+        to,
+        message,
+        status: 'failed',
+        timestamp: new Date(),
+        user: userId,
+        error: result.message
+      });
 
-        // Return a specific status code for reconnection needed
-        return res.status(401).json({
-          success: false,
-          message: result.message,
-          needsReconnect: true,
-          deviceId: deviceId
-        });
-      }
-
-      // For temporary errors, use a different status code
-      if (result.temporary) {
-        return res.status(503).json({
-          success: false,
-          message: result.message,
-          temporary: true,
-          deviceId: deviceId
-        });
-      }
-
-      // For other errors
-      res.status(500).json({
+      // For queued message failures
+      res.status(400).json({
         success: false,
-        message: result.message,
-        error: result.error
+        message: result.message
       });
     }
   } catch (error) {

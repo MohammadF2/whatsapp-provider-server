@@ -4,7 +4,11 @@ import path from 'path';
 import fs from 'fs';
 import Device from '../models/device.model';
 import WhatsAppClient from '../models/whatsapp-client.model';
+import ProxyDeviceMapping from '../models/proxy-device-mapping.model';
 import WebhookManager from './webhook-manager.service';
+import { getDecodoProxyService, DecodoProxyService, ProxyInfo } from './decodo-proxy.service';
+import { getMessageQueueService, MessageQueueService, QueuedMessage } from './message-queue.service';
+import { getProxyConfig, getProxyCountry, isDecodoEnabled, isMessageQueueEnabled } from '../config/proxy.config';
 
 /**
  * WhatsAppClientManager - A class to manage WhatsApp client instances
@@ -29,7 +33,168 @@ class WhatsAppClientManager {
     }
   } = {};
 
+  // Proxy and message queue services
+  private proxyService: DecodoProxyService | null = null;
+  private messageQueueService: MessageQueueService | null = null;
 
+  constructor() {
+    this.initializeServices();
+  }
+
+  /**
+   * Initialize proxy and message queue services
+   */
+  private initializeServices(): void {
+    try {
+      const config = getProxyConfig();
+
+      // Initialize Decodo proxy service if enabled
+      if (isDecodoEnabled()) {
+        this.proxyService = getDecodoProxyService(config.decodo);
+        console.log('[WhatsAppClientManager] Decodo proxy service initialized');
+      }
+
+      // Initialize message queue service if enabled
+      if (isMessageQueueEnabled()) {
+        this.messageQueueService = getMessageQueueService(config.messageQueue);
+
+        // Set message processor
+        this.messageQueueService.setProcessor(async (message: QueuedMessage) => {
+          await this.processQueuedMessage(message);
+        });
+
+        // Start queue processing
+        this.messageQueueService.start();
+        console.log('[WhatsAppClientManager] Message queue service initialized');
+      }
+    } catch (error) {
+      console.error('[WhatsAppClientManager] Error initializing services:', error);
+    }
+  }
+
+  /**
+   * Process queued message
+   */
+  private async processQueuedMessage(message: QueuedMessage): Promise<void> {
+    console.log(`[WhatsAppClientManager] Processing queued message for device ${message.deviceId}`);
+
+    try {
+      // Check if this is a Selenium client
+      const useSelenium = message.metadata?.useSelenium;
+
+      if (useSelenium) {
+        console.log(`[WhatsAppClientManager] Using Selenium client for queued message ${message.id}`);
+        // Import Selenium service dynamically to avoid circular dependencies
+        const { sendMessageWithSelenium } = await import('./whatsapp-selenium.service');
+        const result = await sendMessageWithSelenium(message.deviceId, message.to, message.message);
+
+        if (!result.success) {
+          throw new Error(result.message || 'Selenium message sending failed');
+        }
+
+        console.log(`[WhatsAppClientManager] Selenium queued message sent successfully for device ${message.deviceId}`);
+      } else {
+        console.log(`[WhatsAppClientManager] Using regular client for queued message ${message.id}`);
+        const client = this.clients[message.deviceId];
+        if (!client) {
+          throw new Error(`No active client found for device ${message.deviceId}`);
+        }
+
+        // Send the message using the regular client
+        await client.sendMessage(message.to, message.message);
+        console.log(`[WhatsAppClientManager] Regular queued message sent successfully for device ${message.deviceId}`);
+      }
+
+      // Record successful proxy usage
+      await recordProxyUsage(message.deviceId, true);
+
+    } catch (error) {
+      console.error(`[WhatsAppClientManager] Error processing queued message for device ${message.deviceId}:`, error);
+
+      // Record failed proxy usage
+      await recordProxyUsage(message.deviceId, false);
+
+      throw error;
+    }
+  }
+
+  /**
+   * Get or assign proxy for device
+   */
+  private async getProxyForDevice(deviceId: string, deviceCountry?: string): Promise<ProxyInfo | null> {
+    if (!this.proxyService) {
+      return null;
+    }
+
+    try {
+      // Check if device already has a proxy mapping
+      let proxyMapping = await ProxyDeviceMapping.findActiveByDevice(deviceId);
+
+      if (proxyMapping && proxyMapping.isHealthy()) {
+        console.log(`[WhatsAppClientManager] Using existing proxy for device ${deviceId}`);
+        return {
+          id: proxyMapping.proxyId,
+          country: proxyMapping.proxyConfig.country,
+          city: proxyMapping.proxyConfig.city,
+          carrier: proxyMapping.proxyConfig.carrier,
+          networkType: proxyMapping.proxyConfig.networkType,
+          endpoint: proxyMapping.proxyConfig.endpoint,
+          port: proxyMapping.proxyConfig.port,
+          isActive: true,
+        };
+      }
+
+      // Determine target country for proxy
+      const targetCountry = deviceCountry ? getProxyCountry(deviceCountry) : 'US';
+
+      // Get new proxy from Decodo service
+      const proxy = await this.proxyService.getProxyForDevice(deviceId, {
+        country: targetCountry,
+        networkType: '4G',
+      });
+
+      // Save proxy mapping to database
+      if (proxyMapping) {
+        // Update existing mapping
+        proxyMapping.proxyId = proxy.id;
+        proxyMapping.proxyConfig = {
+          country: proxy.country,
+          city: proxy.city,
+          carrier: proxy.carrier,
+          networkType: proxy.networkType,
+          endpoint: proxy.endpoint,
+          port: proxy.port,
+        };
+        proxyMapping.status = 'active';
+        proxyMapping.assignedAt = new Date();
+        proxyMapping.failureCount = 0;
+        await proxyMapping.save();
+      } else {
+        // Create new mapping
+        proxyMapping = new ProxyDeviceMapping({
+          deviceId,
+          proxyId: proxy.id,
+          proxyConfig: {
+            country: proxy.country,
+            city: proxy.city,
+            carrier: proxy.carrier,
+            networkType: proxy.networkType,
+            endpoint: proxy.endpoint,
+            port: proxy.port,
+          },
+          status: 'active',
+        });
+        await proxyMapping.save();
+      }
+
+      console.log(`[WhatsAppClientManager] Assigned new proxy ${proxy.id} to device ${deviceId} for country ${targetCountry}`);
+      return proxy;
+
+    } catch (error) {
+      console.error(`[WhatsAppClientManager] Error getting proxy for device ${deviceId}:`, error);
+      return null;
+    }
+  }
 
   /**
    * Add a client to the active clients collection and update the database
@@ -211,26 +376,39 @@ class WhatsAppClientManager {
         return undefined;
       }
 
-      // Create client with stored configuration
+      // Get proxy configuration for device
+      const proxy = await this.getProxyForDevice(deviceId);
+
+      // Create client with stored configuration and proxy
       const { Client, LocalAuth } = require('whatsapp-web.js');
+      const puppeteerOptions = whatsappClient.clientConfig?.puppeteerOptions || {
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu'
+        ]
+      };
+
+      // Add proxy configuration if available
+      if (proxy && this.proxyService) {
+        const proxyAgent = this.proxyService.createProxyAgent(proxy, 'http');
+        puppeteerOptions.args = puppeteerOptions.args || [];
+        puppeteerOptions.args.push(`--proxy-server=http://${proxy.endpoint}:${proxy.port}`);
+        console.log(`[WhatsAppClientManager] Using proxy ${proxy.id} for device ${deviceId}`);
+      }
+
       const client = new Client({
         authStrategy: new LocalAuth({
           clientId: deviceId,
           dataPath: whatsappClient.sessionPath
         }),
-        puppeteer: whatsappClient.clientConfig?.puppeteerOptions || {
-          headless: true,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu'
-          ]
-        }
+        puppeteer: puppeteerOptions
       });
 
       // Store in memory
@@ -1039,7 +1217,89 @@ export const disconnectWhatsAppClient = async (deviceId: string) => {
   }
 };
 
-// Send a message
+/**
+ * Send message through queue (recommended method)
+ */
+export const sendMessageQueued = async (
+  deviceId: string,
+  to: string,
+  message: string,
+  options: {
+    priority?: 'low' | 'normal' | 'high';
+    type?: 'text' | 'media' | 'button' | 'poll';
+    maxAttempts?: number;
+    metadata?: Record<string, any>;
+  } = {}
+): Promise<{ success: boolean; message: string; messageId?: string }> => {
+  console.log(`[WhatsApp] Queuing message for device ${deviceId} to ${to}`);
+
+  try {
+    // Check if message queue is enabled
+    if (!isMessageQueueEnabled()) {
+      console.log(`[WhatsApp] Message queue disabled, sending directly`);
+      const result = await sendMessage(deviceId, to, message);
+      return {
+        success: result.success,
+        message: result.message || (result.success ? 'Message sent successfully' : 'Failed to send message'),
+        messageId: result.messageId,
+      };
+    }
+
+    const messageQueueService = getMessageQueueService();
+
+    // Enqueue the message
+    const success = messageQueueService.enqueueMessage({
+      deviceId,
+      to,
+      message,
+      type: options.type || 'text',
+      priority: options.priority || 'normal',
+      maxAttempts: options.maxAttempts || 3,
+      metadata: options.metadata,
+    });
+
+    if (success) {
+      console.log(`[WhatsApp] Message queued successfully for device ${deviceId}`);
+      return {
+        success: true,
+        message: 'Message queued successfully',
+      };
+    } else {
+      console.log(`[WhatsApp] Failed to queue message for device ${deviceId} - queue full`);
+      return {
+        success: false,
+        message: 'Message queue is full. Please try again later.',
+      };
+    }
+  } catch (error) {
+    console.error(`[WhatsApp] Error queuing message for device ${deviceId}:`, error);
+    return {
+      success: false,
+      message: 'Failed to queue message: ' + (error as Error).message,
+    };
+  }
+};
+
+/**
+ * Record proxy usage metrics
+ */
+const recordProxyUsage = async (deviceId: string, success: boolean, responseTime?: number): Promise<void> => {
+  try {
+    const proxyMapping = await ProxyDeviceMapping.findActiveByDevice(deviceId);
+    if (proxyMapping) {
+      if (success) {
+        proxyMapping.recordSuccess(responseTime);
+      } else {
+        proxyMapping.recordFailure();
+      }
+      await proxyMapping.save();
+    }
+  } catch (error) {
+    console.error(`[WhatsApp] Error recording proxy usage for device ${deviceId}:`, error);
+  }
+};
+
+// Send a message (direct method - use sendMessageQueued instead for better rate limiting)
 export const sendMessage = async (deviceId: string, to: string, message: string) => {
   console.log(`[WhatsApp] Sending message for device ${deviceId} to ${to}`);
   try {
@@ -1177,12 +1437,21 @@ export const sendMessage = async (deviceId: string, to: string, message: string)
       }
 
       // Now try to send the message
+      const startTime = Date.now();
       const response = await client.sendMessage(formattedNumber, message);
-      console.log(`[WhatsApp] Message sent successfully for device ${deviceId}, message ID: ${response.id.id}`);
+      const responseTime = Date.now() - startTime;
+
+      console.log(`[WhatsApp] Message sent successfully for device ${deviceId}, message ID: ${response.id.id}, response time: ${responseTime}ms`);
+
+      // Record successful proxy usage
+      await recordProxyUsage(deviceId, true, responseTime);
 
       return { success: true, messageId: response.id.id };
     } catch (sendError) {
       console.error(`[WhatsApp] Error in send operation for device ${deviceId}:`, sendError);
+
+      // Record failed proxy usage
+      await recordProxyUsage(deviceId, false);
 
       // Check for WidFactory error specifically
       if (sendError.message && sendError.message.includes('WidFactory')) {
@@ -1213,6 +1482,9 @@ export const sendMessage = async (deviceId: string, to: string, message: string)
     }
   } catch (error) {
     console.error(`[WhatsApp] Send message error for device ${deviceId}:`, error);
+
+    // Record failed proxy usage
+    await recordProxyUsage(deviceId, false);
 
     // Check for specific errors
     if (error.message && error.message.includes('WidFactory')) {
