@@ -15,7 +15,7 @@ import conversationRoutes from './routes/conversation.routes';
 import messageHistoryRoutes from './routes/message-history.routes';
 import contactRoutes from './routes/contact.routes';
 import qrcodeRoutes from './routes/qrcode.routes';
-import proxyRoutes from './routes/proxy.routes';
+// import proxyRoutes from './routes/proxy.routes';
 import { setupSocketHandlers } from './socket';
 import { restoreActiveClients } from './services/whatsapp.service';
 import swaggerSpec from './config/swagger';
@@ -143,7 +143,7 @@ app.use('/api/whatsapp', conversationRoutes); // Add conversation routes under t
 app.use('/api/message-history', messageHistoryRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/qrcode', qrcodeRoutes);
-app.use('/api/proxy', proxyRoutes);
+// app.use('/api/proxy', proxyRoutes);
 // app.use('/api/webhooks', webhookSimpleRoutes);
 
 // Set up webhook endpoints
